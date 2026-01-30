@@ -529,12 +529,14 @@ bool captureScreenshot(const Config& config, std::string& path, std::string& err
     command << " " << path;
 #endif
 
+#if !defined(_WIN32)
     int result = std::system(command.str().c_str());
     if (result != 0) {
         error = "Failed to capture screenshot. Ensure ImageMagick (import) is installed.";
         return false;
     }
     return true;
+#endif
 }
 
 std::string buildMainKeyboard() {
