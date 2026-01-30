@@ -482,7 +482,7 @@ int main() {
             auto updates = parseUpdates(response);
 
             for (const auto& update : updates) {
-                offset = std::max(offset, update.update_id + 1);
+                offset = (std::max)(offset, update.update_id + 1);
 
                 if (!config.allowed_chat_ids.empty() &&
                     config.allowed_chat_ids.find(update.chat_id) == config.allowed_chat_ids.end()) {
