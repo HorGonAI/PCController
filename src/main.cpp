@@ -2,6 +2,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -147,6 +148,66 @@ Config loadConfig(const std::string& path) {
     return config;
 }
 
+void appendUtf8(std::string& output, std::uint32_t codepoint) {
+    if (codepoint <= 0x7F) {
+        output.push_back(static_cast<char>(codepoint));
+    } else if (codepoint <= 0x7FF) {
+        output.push_back(static_cast<char>(0xC0 | ((codepoint >> 6) & 0x1F)));
+        output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    } else if (codepoint <= 0xFFFF) {
+        output.push_back(static_cast<char>(0xE0 | ((codepoint >> 12) & 0x0F)));
+        output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+        output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    } else {
+        output.push_back(static_cast<char>(0xF0 | ((codepoint >> 18) & 0x07)));
+        output.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+        output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+        output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    }
+}
+
+bool decodeUnicodeEscape(const std::string& input, std::size_t& index, std::string& output) {
+    if (index + 5 >= input.size() || input[index] != '\\' || input[index + 1] != 'u') {
+        return false;
+    }
+    auto hexToInt = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+        if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+        return -1;
+    };
+
+    std::uint32_t codepoint = 0;
+    for (int i = 0; i < 4; ++i) {
+        int value = hexToInt(input[index + 2 + i]);
+        if (value < 0) {
+            return false;
+        }
+        codepoint = (codepoint << 4) | static_cast<std::uint32_t>(value);
+    }
+    index += 5;
+
+    if (codepoint >= 0xD800 && codepoint <= 0xDBFF) {
+        if (index + 6 < input.size() && input[index + 1] == '\\' && input[index + 2] == 'u') {
+            std::uint32_t low = 0;
+            for (int i = 0; i < 4; ++i) {
+                int value = hexToInt(input[index + 3 + i]);
+                if (value < 0) {
+                    return false;
+                }
+                low = (low << 4) | static_cast<std::uint32_t>(value);
+            }
+            if (low >= 0xDC00 && low <= 0xDFFF) {
+                codepoint = 0x10000 + (((codepoint - 0xD800) << 10) | (low - 0xDC00));
+                index += 6;
+            }
+        }
+    }
+
+    appendUtf8(output, codepoint);
+    return true;
+}
+
 bool parseJsonString(const std::string& input, std::size_t start_pos, std::string& output) {
     if (start_pos >= input.size() || input[start_pos] != '"') {
         return false;
@@ -171,6 +232,15 @@ bool parseJsonString(const std::string& input, std::size_t start_pos, std::strin
                 case '"':
                     result.push_back(c);
                     break;
+                case 'u': {
+                    std::size_t unicode_index = i - 1;
+                    if (decodeUnicodeEscape(input, unicode_index, result)) {
+                        i = unicode_index;
+                    } else {
+                        result.push_back('u');
+                    }
+                    break;
+                }
                 default:
                     result.push_back(c);
                     break;
@@ -477,7 +547,7 @@ int main() {
     Config runtime_config = config;
     while (true) {
         try {
-            std::string url = "https://api.telegram.org/bot" + token + "/getUpdates?timeout=30&offset=" + std::to_string(offset);
+            std::string url = "https://api.telegram.org/bot" + token + "/getUpdates?timeout=5&allowed_updates=message&offset=" + std::to_string(offset);
             std::string response = httpGet(url);
             auto updates = parseUpdates(response);
 
