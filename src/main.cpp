@@ -16,6 +16,12 @@
 
 #include <curl/curl.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <gdiplus.h>
+#pragma comment(lib, "Gdiplus.lib")
+#endif
+
 namespace {
 
 struct Update {
@@ -32,6 +38,14 @@ struct Config {
     bool screenshot_compression = true;
     int screenshot_quality = 85;
     std::string screenshot_format = "jpg";
+};
+
+enum class MenuState {
+    Main,
+    Settings,
+    Quality,
+    ScreenshotSettings,
+    ResolutionSelect
 };
 
 constexpr std::size_t kMaxMessageLength = 3500;
@@ -384,7 +398,18 @@ std::string runCommand(const std::string& command) {
 std::string buildScreenshotPath(const std::string& format) {
     std::ostringstream path;
     auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    path << "/tmp/pccontroller_" << now << "." << format;
+#ifdef _WIN32
+    char temp_path[MAX_PATH] = {0};
+    DWORD length = GetTempPathA(MAX_PATH, temp_path);
+    if (length == 0 || length > MAX_PATH) {
+        path << "pccontroller_";
+    } else {
+        path << temp_path << "pccontroller_";
+    }
+#else
+    path << "/tmp/pccontroller_";
+#endif
+    path << now << "." << format;
     return path.str();
 }
 
@@ -395,13 +420,108 @@ bool captureScreenshot(const Config& config, std::string& path, std::string& err
     }
     path = buildScreenshotPath(format);
 
-    std::ostringstream command;
 #if defined(_WIN32)
-    error = "Screenshot capture is not implemented on Windows yet.";
-    return false;
+    ULONG_PTR gdiplus_token = 0;
+    Gdiplus::GdiplusStartupInput gdiplus_startup;
+    if (Gdiplus::GdiplusStartup(&gdiplus_token, &gdiplus_startup, nullptr) != Gdiplus::Ok) {
+        error = "Failed to initialize GDI+.";
+        return false;
+    }
+
+    HDC screen_dc = GetDC(nullptr);
+    HDC memory_dc = CreateCompatibleDC(screen_dc);
+    int screen_width = GetSystemMetrics(SM_CXSCREEN);
+    int screen_height = GetSystemMetrics(SM_CYSCREEN);
+    HBITMAP screen_bitmap = CreateCompatibleBitmap(screen_dc, screen_width, screen_height);
+    if (!screen_bitmap) {
+        error = "Failed to capture screenshot.";
+        DeleteDC(memory_dc);
+        ReleaseDC(nullptr, screen_dc);
+        Gdiplus::GdiplusShutdown(gdiplus_token);
+        return false;
+    }
+
+    HGDIOBJ old_bitmap = SelectObject(memory_dc, screen_bitmap);
+    BOOL blt_ok = BitBlt(memory_dc, 0, 0, screen_width, screen_height, screen_dc, 0, 0, SRCCOPY | CAPTUREBLT);
+    SelectObject(memory_dc, old_bitmap);
+    DeleteDC(memory_dc);
+    ReleaseDC(nullptr, screen_dc);
+
+    if (!blt_ok) {
+        error = "Failed to capture screenshot.";
+        DeleteObject(screen_bitmap);
+        Gdiplus::GdiplusShutdown(gdiplus_token);
+        return false;
+    }
+
+    Gdiplus::Bitmap original(screen_bitmap, nullptr);
+    DeleteObject(screen_bitmap);
+
+    int target_width = config.screenshot_width > 0 ? config.screenshot_width : screen_width;
+    int target_height = config.screenshot_height > 0 ? config.screenshot_height : screen_height;
+    Gdiplus::Bitmap resized(target_width, target_height, PixelFormat32bppARGB);
+    {
+        Gdiplus::Graphics graphics(&resized);
+        graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+        graphics.DrawImage(&original, 0, 0, target_width, target_height);
+    }
+
+    auto getEncoderClsid = [](const WCHAR* format, CLSID* clsid) -> bool {
+        UINT num = 0;
+        UINT size = 0;
+        if (Gdiplus::GetImageEncodersSize(&num, &size) != Gdiplus::Ok || size == 0) {
+            return false;
+        }
+        std::vector<BYTE> buffer(size);
+        auto* encoders = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buffer.data());
+        if (Gdiplus::GetImageEncoders(num, size, encoders) != Gdiplus::Ok) {
+            return false;
+        }
+        for (UINT i = 0; i < num; ++i) {
+            if (wcscmp(encoders[i].MimeType, format) == 0) {
+                *clsid = encoders[i].Clsid;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    CLSID encoder_clsid;
+    const WCHAR* mime = (format == "jpg" || format == "jpeg") ? L"image/jpeg" : L"image/png";
+    if (!getEncoderClsid(mime, &encoder_clsid)) {
+        error = "Failed to find image encoder.";
+        Gdiplus::GdiplusShutdown(gdiplus_token);
+        return false;
+    }
+
+    Gdiplus::EncoderParameters encoder_params;
+    encoder_params.Count = 0;
+    if (format == "jpg" || format == "jpeg") {
+        encoder_params.Count = 1;
+        encoder_params.Parameter[0].Guid = Gdiplus::EncoderQuality;
+        encoder_params.Parameter[0].Type = Gdiplus::EncoderParameterValueTypeLong;
+        encoder_params.Parameter[0].NumberOfValues = 1;
+        ULONG quality = static_cast<ULONG>(config.screenshot_quality);
+        encoder_params.Parameter[0].Value = &quality;
+    }
+
+    std::wstring wide_path(path.begin(), path.end());
+    Gdiplus::Status save_status = resized.Save(
+        wide_path.c_str(),
+        &encoder_clsid,
+        encoder_params.Count ? &encoder_params : nullptr);
+
+    Gdiplus::GdiplusShutdown(gdiplus_token);
+    if (save_status != Gdiplus::Ok) {
+        error = "Failed to save screenshot.";
+        return false;
+    }
+    return true;
 #elif defined(__APPLE__)
+    std::ostringstream command;
     command << "screencapture -x " << path;
 #else
+    std::ostringstream command;
     command << "import -window root -resize " << config.screenshot_width << "x" << config.screenshot_height;
     if (config.screenshot_compression && format == "jpg") {
         command << " -quality " << config.screenshot_quality;
@@ -424,12 +544,28 @@ std::string buildMainKeyboard() {
 std::string buildSettingsKeyboard(const Config& config) {
     std::ostringstream keyboard;
     keyboard << "{\"keyboard\":[";
-    keyboard << "[{\"text\":\"Разрешение 1280x720\"}],";
-    keyboard << "[{\"text\":\"Разрешение 1920x1080\"}],";
-    keyboard << "[{\"text\":\"Сжатие: " << (config.screenshot_compression ? "Вкл" : "Выкл") << "\"}],";
+    keyboard << "[{\"text\":\"Качество\"}],";
     keyboard << "[{\"text\":\"Назад\"}]";
     keyboard << "],\"resize_keyboard\":true}";
     return keyboard.str();
+}
+
+std::string buildQualityKeyboard() {
+    return "{\"keyboard\":[[{\"text\":\"Скриншоты\"}],[{\"text\":\"Назад\"}]],\"resize_keyboard\":true}";
+}
+
+std::string buildScreenshotSettingsKeyboard(const Config& config) {
+    std::ostringstream keyboard;
+    keyboard << "{\"keyboard\":[";
+    keyboard << "[{\"text\":\"Сжатие: " << (config.screenshot_compression ? "Вкл" : "Выкл") << "\"}],";
+    keyboard << "[{\"text\":\"Разрешение: " << config.screenshot_width << "x" << config.screenshot_height << "\"}],";
+    keyboard << "[{\"text\":\"Назад\"}]";
+    keyboard << "],\"resize_keyboard\":true}";
+    return keyboard.str();
+}
+
+std::string buildResolutionKeyboard() {
+    return "{\"keyboard\":[[{\"text\":\"Разрешение 1280x720\"}],[{\"text\":\"Разрешение 1920x1080\"}],[{\"text\":\"Назад\"}]],\"resize_keyboard\":true}";
 }
 
 std::string getStatus() {
@@ -545,6 +681,7 @@ int main() {
 
     long long offset = 0;
     Config runtime_config = config;
+    MenuState menu_state = MenuState::Main;
     while (true) {
         try {
             std::string url = "https://api.telegram.org/bot" + token + "/getUpdates?timeout=5&allowed_updates=message&offset=" + std::to_string(offset);
@@ -570,27 +707,58 @@ int main() {
                         sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
                         sendMessage(token, update.chat_id, "Готово.", buildMainKeyboard());
                     }
+                    menu_state = MenuState::Main;
                 } else if (text == "Настройки") {
                     sendMessage(token, update.chat_id, "Выберите параметр.", buildSettingsKeyboard(runtime_config));
+                    menu_state = MenuState::Settings;
+                } else if (text == "Качество") {
+                    sendMessage(token, update.chat_id, "Раздел качества.", buildQualityKeyboard());
+                    menu_state = MenuState::Quality;
+                } else if (text == "Скриншоты") {
+                    sendMessage(token, update.chat_id, "Настройки скриншотов.", buildScreenshotSettingsKeyboard(runtime_config));
+                    menu_state = MenuState::ScreenshotSettings;
+                } else if (text.rfind("Разрешение:", 0) == 0) {
+                    sendMessage(token, update.chat_id, "Выберите разрешение.", buildResolutionKeyboard());
+                    menu_state = MenuState::ResolutionSelect;
                 } else if (text == "Разрешение 1280x720") {
                     runtime_config.screenshot_width = 1280;
                     runtime_config.screenshot_height = 720;
-                    sendMessage(token, update.chat_id, "Разрешение установлено 1280x720.", buildSettingsKeyboard(runtime_config));
+                    sendMessage(token, update.chat_id, "Разрешение установлено 1280x720.", buildScreenshotSettingsKeyboard(runtime_config));
+                    menu_state = MenuState::ScreenshotSettings;
                 } else if (text == "Разрешение 1920x1080") {
                     runtime_config.screenshot_width = 1920;
                     runtime_config.screenshot_height = 1080;
-                    sendMessage(token, update.chat_id, "Разрешение установлено 1920x1080.", buildSettingsKeyboard(runtime_config));
+                    sendMessage(token, update.chat_id, "Разрешение установлено 1920x1080.", buildScreenshotSettingsKeyboard(runtime_config));
+                    menu_state = MenuState::ScreenshotSettings;
                 } else if (text.rfind("Сжатие", 0) == 0) {
                     runtime_config.screenshot_compression = !runtime_config.screenshot_compression;
                     runtime_config.screenshot_format = runtime_config.screenshot_compression ? "jpg" : "png";
                     std::string status = runtime_config.screenshot_compression ? "Вкл" : "Выкл";
-                    sendMessage(token, update.chat_id, "Сжатие: " + status + ".", buildSettingsKeyboard(runtime_config));
+                    sendMessage(token, update.chat_id, "Сжатие: " + status + ".", buildScreenshotSettingsKeyboard(runtime_config));
+                    menu_state = MenuState::ScreenshotSettings;
                 } else if (text == "Назад") {
-                    sendMessage(token, update.chat_id, "Главное меню.", buildMainKeyboard());
+                    if (menu_state == MenuState::ResolutionSelect) {
+                        sendMessage(token, update.chat_id, "Настройки скриншотов.", buildScreenshotSettingsKeyboard(runtime_config));
+                        menu_state = MenuState::ScreenshotSettings;
+                    } else if (menu_state == MenuState::ScreenshotSettings) {
+                        sendMessage(token, update.chat_id, "Раздел качества.", buildQualityKeyboard());
+                        menu_state = MenuState::Quality;
+                    } else if (menu_state == MenuState::Quality) {
+                        sendMessage(token, update.chat_id, "Выберите параметр.", buildSettingsKeyboard(runtime_config));
+                        menu_state = MenuState::Settings;
+                    } else if (menu_state == MenuState::Settings) {
+                        sendMessage(token, update.chat_id, "Главное меню.", buildMainKeyboard());
+                        menu_state = MenuState::Main;
+                    } else {
+                        sendMessage(token, update.chat_id, "Главное меню.", buildMainKeyboard());
+                        menu_state = MenuState::Main;
+                    }
                 } else if (text == "/start") {
                     sendMessage(token, update.chat_id, "PCController is online.", buildMainKeyboard());
+                    menu_state = MenuState::Main;
                 } else {
                     sendMessage(token, update.chat_id, "Используйте кнопки клавиатуры.", buildMainKeyboard());
+                    menu_state = MenuState::Main;
                 }
             }
         } catch (const std::exception& ex) {

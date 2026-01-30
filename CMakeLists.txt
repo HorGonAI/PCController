@@ -20,3 +20,7 @@ target_link_libraries(pccontroller
     PRIVATE
         CURL::libcurl
 )
+
+if(WIN32)
+    target_link_libraries(pccontroller PRIVATE Gdiplus)
+endif()
