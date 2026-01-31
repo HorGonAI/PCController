@@ -52,6 +52,12 @@ screenshot.format=jpg
 ./build/pccontroller
 ```
 
+Можно указать путь к конфигу аргументом:
+
+```bash
+./build/pccontroller путь/к/config.ini
+```
+
 ## Использование
 
 1. Откройте чат с ботом.

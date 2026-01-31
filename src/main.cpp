@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -116,6 +117,33 @@ std::string trim(const std::string& input) {
     }
     const auto end = input.find_last_not_of(" \t\r\n");
     return input.substr(start, end - start + 1);
+}
+
+std::filesystem::path getExecutableDir(const char* argv0) {
+#ifdef _WIN32
+    char path_buffer[MAX_PATH] = {0};
+    DWORD size = GetModuleFileNameA(nullptr, path_buffer, MAX_PATH);
+    if (size > 0 && size < MAX_PATH) {
+        return std::filesystem::path(path_buffer).parent_path();
+    }
+#endif
+    if (argv0 && *argv0) {
+        std::filesystem::path path(argv0);
+        if (path.has_parent_path()) {
+            return path.parent_path();
+        }
+    }
+    return std::filesystem::current_path();
+}
+
+bool tryLoadConfig(const std::string& path, Config& config, std::string& error) {
+    try {
+        config = loadConfig(path);
+        return true;
+    } catch (const std::exception& ex) {
+        error = ex.what();
+        return false;
+    }
 }
 
 Config loadConfig(const std::string& path) {
@@ -669,7 +697,7 @@ void sendPhoto(const std::string& token, long long chat_id, const std::string& p
 
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
     const char* token_env = std::getenv("TELEGRAM_BOT_TOKEN");
     if (!token_env || std::string(token_env).empty()) {
         std::cerr << "TELEGRAM_BOT_TOKEN is not set." << std::endl;
@@ -677,15 +705,39 @@ int main() {
     }
     std::string token = token_env;
 
-    const char* config_env = std::getenv("PCCTRL_CONFIG");
-    std::string config_path = config_env ? config_env : "config/config.ini";
-
     Config config;
-    try {
-        config = loadConfig(config_path);
-    } catch (const std::exception& ex) {
-        std::cerr << ex.what() << std::endl;
-        return 1;
+    std::string config_error;
+    std::string config_path;
+    if (argc > 1) {
+        config_path = argv[1];
+    } else {
+        const char* config_env = std::getenv("PCCTRL_CONFIG");
+        config_path = config_env ? config_env : "config/config.ini";
+    }
+
+    if (!tryLoadConfig(config_path, config, config_error)) {
+        std::filesystem::path exe_dir = getExecutableDir(argc > 0 ? argv[0] : nullptr);
+        std::vector<std::filesystem::path> fallbacks = {
+            exe_dir / "config" / "config.ini",
+            exe_dir.parent_path() / "config" / "config.ini"
+        };
+
+        bool loaded = false;
+        for (const auto& candidate : fallbacks) {
+            if (std::filesystem::exists(candidate)) {
+                if (tryLoadConfig(candidate.string(), config, config_error)) {
+                    loaded = true;
+                    config_path = candidate.string();
+                    break;
+                }
+            }
+        }
+
+        if (!loaded) {
+            std::cerr << "Failed to load config: " << config_error << std::endl;
+            std::cout << "Failed to load config: " << config_error << std::endl;
+            return 1;
+        }
     }
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
