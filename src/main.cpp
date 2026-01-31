@@ -337,12 +337,66 @@ bool findStringAfterKey(const std::string& input, const std::string& key, std::s
     return parseJsonString(input, quote_pos, value);
 }
 
+bool findRawValueAfterKey(const std::string& input, const std::string& key, std::size_t start_pos, std::string& value) {
+    auto key_pos = input.find(key, start_pos);
+    if (key_pos == std::string::npos) {
+        return false;
+    }
+    auto colon_pos = input.find(':', key_pos + key.size());
+    if (colon_pos == std::string::npos) {
+        return false;
+    }
+    auto value_start = input.find_first_not_of(" \t\r\n", colon_pos + 1);
+    if (value_start == std::string::npos) {
+        return false;
+    }
+    auto value_end = input.find_first_of(",}", value_start);
+    if (value_end == std::string::npos) {
+        value_end = input.size();
+    }
+    value = trim(input.substr(value_start, value_end - value_start));
+    return !value.empty();
+}
+
 bool findWebAppData(const std::string& input, std::size_t start_pos, std::string& value) {
     auto web_app_pos = input.find("\"web_app_data\"", start_pos);
     if (web_app_pos == std::string::npos) {
         return false;
     }
     return findStringAfterKey(input, "\"data\"", web_app_pos, value);
+}
+
+bool parseWebAppSettings(const std::string& data, bool& compression, int& width, int& height, int& quality) {
+    if (data.find("\"action\"") == std::string::npos) {
+        return false;
+    }
+    std::string action;
+    if (!findStringAfterKey(data, "\"action\"", 0, action) || action != "settings") {
+        return false;
+    }
+    std::string compression_value;
+    std::string width_value;
+    std::string height_value;
+    std::string quality_value;
+    if (!findRawValueAfterKey(data, "\"compression\"", 0, compression_value) ||
+        !findRawValueAfterKey(data, "\"width\"", 0, width_value) ||
+        !findRawValueAfterKey(data, "\"height\"", 0, height_value) ||
+        !findRawValueAfterKey(data, "\"quality\"", 0, quality_value)) {
+        return false;
+    }
+
+    compression = (compression_value == "true" || compression_value == "1");
+    width = std::stoi(width_value);
+    height = std::stoi(height_value);
+    quality = std::stoi(quality_value);
+    return true;
+}
+
+bool parseWebAppAction(const std::string& data, std::string& action) {
+    if (!findStringAfterKey(data, "\"action\"", 0, action)) {
+        return false;
+    }
+    return true;
 }
 
 std::vector<Update> parseUpdates(const std::string& input) {
@@ -907,7 +961,9 @@ int main(int argc, char* argv[]) {
                     setMenuButton(token, update.chat_id, buildWebAppMenuButton(runtime_config.webapp_url));
                 }
 
-                if (update.web_app_data == "screenshot") {
+                std::string action;
+                bool has_action = parseWebAppAction(update.web_app_data, action);
+                if (update.web_app_data == "screenshot" || (has_action && action == "screenshot")) {
                     std::string screenshot_path;
                     std::string error;
                     if (!captureScreenshot(runtime_config, screenshot_path, error)) {
@@ -916,19 +972,32 @@ int main(int argc, char* argv[]) {
                         sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
                         sendMessage(token, update.chat_id, "Готово.");
                     }
-                } else if (text == "Скриншот" || text == "/screenshot") {
-                    std::string screenshot_path;
-                    std::string error;
-                    if (!captureScreenshot(runtime_config, screenshot_path, error)) {
-                        sendMessage(token, update.chat_id, error);
-                    } else {
-                        sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
-                        sendMessage(token, update.chat_id, "Готово.");
-                    }
-                } else if (text == "/start") {
-                    sendMessage(token, update.chat_id, "PCController is online.");
                 } else {
-                    sendMessage(token, update.chat_id, "Используйте /screenshot для снимка экрана.");
+                    bool compression = runtime_config.screenshot_compression;
+                    int width = runtime_config.screenshot_width;
+                    int height = runtime_config.screenshot_height;
+                    int quality = runtime_config.screenshot_quality;
+                    if (parseWebAppSettings(update.web_app_data, compression, width, height, quality)) {
+                        runtime_config.screenshot_compression = compression;
+                        runtime_config.screenshot_format = compression ? "jpg" : "png";
+                        runtime_config.screenshot_width = width;
+                        runtime_config.screenshot_height = height;
+                        runtime_config.screenshot_quality = std::clamp(quality, 10, 100);
+                        sendMessage(token, update.chat_id, "Настройки применены.");
+                    } else if (text == "Скриншот" || text == "/screenshot") {
+                        std::string screenshot_path;
+                        std::string error;
+                        if (!captureScreenshot(runtime_config, screenshot_path, error)) {
+                            sendMessage(token, update.chat_id, error);
+                        } else {
+                            sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
+                            sendMessage(token, update.chat_id, "Готово.");
+                        }
+                    } else if (text == "/start") {
+                        sendMessage(token, update.chat_id, "PCController is online.");
+                    } else {
+                        sendMessage(token, update.chat_id, "Используйте /screenshot для снимка экрана.");
+                    }
                 }
             }
         } catch (const std::exception& ex) {

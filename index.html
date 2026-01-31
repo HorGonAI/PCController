@@ -23,12 +23,33 @@
       </section>
 
       <section class="panel">
-        <h2>Настройки скриншота</h2>
-        <p>Настройки находятся в конфиге на ПК: разрешение и сжатие.</p>
-        <ul>
-          <li>Разрешение: задаётся в <code>config.ini</code></li>
-          <li>Сжатие: включается параметром <code>screenshot.compression</code></li>
-        </ul>
+        <h2>Настройки качества</h2>
+        <div class="settings">
+          <div class="setting">
+            <div class="setting__header">
+              <span>Сжатие</span>
+              <label class="toggle">
+                <input type="checkbox" id="compression-toggle" />
+                <span class="toggle__track"></span>
+              </label>
+            </div>
+            <p class="setting__hint">Включите, чтобы отправлять JPEG со сжатием.</p>
+          </div>
+
+          <div class="setting">
+            <label class="setting__label" for="resolution-select">Разрешение</label>
+            <select id="resolution-select" class="select">
+              <option value="1280x720">1280×720</option>
+              <option value="1920x1080">1920×1080</option>
+              <option value="2560x1440">2560×1440</option>
+            </select>
+          </div>
+
+          <div class="setting">
+            <label class="setting__label" for="quality-range">Качество: <span id="quality-value">85</span></label>
+            <input type="range" id="quality-range" min="10" max="100" value="85" />
+          </div>
+        </div>
       </section>
 
       <section class="panel panel--warning" id="webapp-warning" hidden>
