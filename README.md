@@ -42,11 +42,11 @@ screenshot.height=720
 screenshot.compression=true
 screenshot.quality=85
 screenshot.format=jpg
-webapp.url=https://example.com
+webapp.url=https://your-domain.example/app
 ```
 
 `allowed_chat_ids` — список разрешённых чатов (через запятую). Настройки `screenshot.*` управляют разрешением и форматом снимка.
-`webapp.url` добавляет кнопку **Open** в меню вложений Telegram.
+`webapp.url` добавляет кнопку **Open** в меню вложений Telegram и должен указывать на ваш веб-интерфейс.
 
 ## Запуск
 
