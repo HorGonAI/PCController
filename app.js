@@ -57,5 +57,8 @@ screenshotBtn.addEventListener("click", () => {
     return;
   }
   setStatus("Команда отправлена, ожидайте скриншот в чате.");
-  sendWebAppData({ action: "screenshot" });
+  if (!tg) {
+    return;
+  }
+  tg.sendData("screenshot");
 });

@@ -941,6 +941,7 @@ int main(int argc, char* argv[]) {
 
     long long offset = 0;
     Config runtime_config = config;
+    std::unordered_set<long long> menu_button_set;
     while (true) {
         try {
             std::string url = "https://api.telegram.org/bot" + token + "/getUpdates?timeout=5&allowed_updates=message&offset=" + std::to_string(offset);
@@ -957,8 +958,10 @@ int main(int argc, char* argv[]) {
                 }
 
                 std::string text = trim(update.text);
-                if (!runtime_config.webapp_url.empty()) {
+                if (!runtime_config.webapp_url.empty() &&
+                    menu_button_set.find(update.chat_id) == menu_button_set.end()) {
                     setMenuButton(token, update.chat_id, buildWebAppMenuButton(runtime_config.webapp_url));
+                    menu_button_set.insert(update.chat_id);
                 }
 
                 std::string action;
@@ -984,6 +987,8 @@ int main(int argc, char* argv[]) {
                         runtime_config.screenshot_height = height;
                         runtime_config.screenshot_quality = std::clamp(quality, 10, 100);
                         sendMessage(token, update.chat_id, "Настройки применены.");
+                    } else if (!update.web_app_data.empty() && text.empty()) {
+                        sendMessage(token, update.chat_id, "Неизвестные данные Web App.");
                     } else if (text == "Скриншот" || text == "/screenshot") {
                         std::string screenshot_path;
                         std::string error;
