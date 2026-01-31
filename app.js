@@ -12,6 +12,35 @@ const setStatus = (text) => {
   statusEl.textContent = text;
 };
 
+const loadSettings = () => {
+  const raw = localStorage.getItem("pccontroller.settings");
+  if (!raw) {
+    return {
+      compression: false,
+      resolution: "1280x720",
+      quality: 85,
+    };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      compression: Boolean(parsed.compression),
+      resolution: parsed.resolution || "1280x720",
+      quality: Number(parsed.quality) || 85,
+    };
+  } catch {
+    return {
+      compression: false,
+      resolution: "1280x720",
+      quality: 85,
+    };
+  }
+};
+
+const saveSettings = (settings) => {
+  localStorage.setItem("pccontroller.settings", JSON.stringify(settings));
+};
+
 const sendWebAppData = (payload) => {
   if (!tg) {
     setStatus("Команда недоступна вне Telegram.");
@@ -33,23 +62,38 @@ const sendSettings = () => {
   setStatus("Настройки отправлены.");
 };
 
+const initialSettings = loadSettings();
+compressionToggle.checked = initialSettings.compression;
+resolutionSelect.value = initialSettings.resolution;
+qualityRange.value = String(initialSettings.quality);
+qualityValue.textContent = qualityRange.value;
+
 if (!tg) {
   warningEl.hidden = false;
   setStatus("Откройте Web App через Telegram.");
 } else {
   tg.ready();
   tg.expand();
+  sendSettings();
 }
-
-qualityValue.textContent = qualityRange.value;
 
 qualityRange.addEventListener("input", () => {
   qualityValue.textContent = qualityRange.value;
 });
 
-qualityRange.addEventListener("change", sendSettings);
-resolutionSelect.addEventListener("change", sendSettings);
-compressionToggle.addEventListener("change", sendSettings);
+const handleSettingsChange = () => {
+  const settings = {
+    compression: compressionToggle.checked,
+    resolution: resolutionSelect.value,
+    quality: Number(qualityRange.value),
+  };
+  saveSettings(settings);
+  sendSettings();
+};
+
+qualityRange.addEventListener("change", handleSettingsChange);
+resolutionSelect.addEventListener("change", handleSettingsChange);
+compressionToggle.addEventListener("change", handleSettingsChange);
 
 screenshotBtn.addEventListener("click", () => {
   if (!tg) {
@@ -61,4 +105,7 @@ screenshotBtn.addEventListener("click", () => {
     return;
   }
   tg.sendData("screenshot");
+  if (typeof tg.close === "function") {
+    tg.close();
+  }
 });
