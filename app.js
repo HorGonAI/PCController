@@ -59,6 +59,18 @@ const buildSettingsPayload = () => {
   };
 };
 
+const buildQueryPayload = (action) => {
+  const settings = buildSettingsPayload();
+  const params = new URLSearchParams({
+    action,
+    compression: settings.compression ? "1" : "0",
+    width: String(settings.width),
+    height: String(settings.height),
+    quality: String(settings.quality),
+  });
+  return params.toString();
+};
+
 const initialSettings = loadSettings();
 compressionToggle.checked = initialSettings.compression;
 resolutionSelect.value = initialSettings.resolution;
@@ -100,9 +112,5 @@ screenshotBtn.addEventListener("click", () => {
   if (!tg) {
     return;
   }
-  const payload = {
-    action: "screenshot",
-    ...buildSettingsPayload(),
-  };
-  tg.sendData(JSON.stringify(payload));
+  tg.sendData(buildQueryPayload("screenshot"));
 });

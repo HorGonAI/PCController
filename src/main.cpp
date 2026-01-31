@@ -358,6 +358,55 @@ bool findRawValueAfterKey(const std::string& input, const std::string& key, std:
     return !value.empty();
 }
 
+std::string urlDecode(const std::string& input) {
+    std::string result;
+    result.reserve(input.size());
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        char c = input[i];
+        if (c == '%' && i + 2 < input.size()) {
+            auto hexToInt = [](char ch) -> int {
+                if (ch >= '0' && ch <= '9') return ch - '0';
+                if (ch >= 'a' && ch <= 'f') return 10 + (ch - 'a');
+                if (ch >= 'A' && ch <= 'F') return 10 + (ch - 'A');
+                return -1;
+            };
+            int hi = hexToInt(input[i + 1]);
+            int lo = hexToInt(input[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                result.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+            } else {
+                result.push_back(c);
+            }
+        } else if (c == '+') {
+            result.push_back(' ');
+        } else {
+            result.push_back(c);
+        }
+    }
+    return result;
+}
+
+bool parseQueryString(const std::string& input, std::map<std::string, std::string>& params) {
+    if (input.find('=') == std::string::npos) {
+        return false;
+    }
+    std::stringstream ss(input);
+    std::string pair;
+    while (std::getline(ss, pair, '&')) {
+        auto eq_pos = pair.find('=');
+        if (eq_pos == std::string::npos) {
+            continue;
+        }
+        std::string key = urlDecode(pair.substr(0, eq_pos));
+        std::string value = urlDecode(pair.substr(eq_pos + 1));
+        if (!key.empty()) {
+            params[key] = value;
+        }
+    }
+    return !params.empty();
+}
+
 bool findWebAppData(const std::string& input, std::size_t start_pos, std::string& value) {
     auto web_app_pos = input.find("\"web_app_data\"", start_pos);
     if (web_app_pos == std::string::npos) {
@@ -415,10 +464,18 @@ bool parseWebAppScreenshotSettings(const std::string& data, bool& compression, i
 }
 
 bool parseWebAppAction(const std::string& data, std::string& action) {
-    if (!findStringAfterKey(data, "\"action\"", 0, action)) {
-        return false;
+    if (findStringAfterKey(data, "\"action\"", 0, action)) {
+        return true;
     }
-    return true;
+    std::map<std::string, std::string> params;
+    if (parseQueryString(data, params)) {
+        auto it = params.find("action");
+        if (it != params.end()) {
+            action = it->second;
+            return true;
+        }
+    }
+    return false;
 }
 
 std::vector<Update> parseUpdates(const std::string& input) {
@@ -999,6 +1056,22 @@ int main(int argc, char* argv[]) {
                         runtime_config.screenshot_width = width;
                         runtime_config.screenshot_height = height;
                         runtime_config.screenshot_quality = std::clamp(quality, 10, 100);
+                    } else {
+                        std::map<std::string, std::string> params;
+                        if (parseQueryString(update.web_app_data, params)) {
+                            auto comp_it = params.find("compression");
+                            auto width_it = params.find("width");
+                            auto height_it = params.find("height");
+                            auto quality_it = params.find("quality");
+                            if (comp_it != params.end() && width_it != params.end() &&
+                                height_it != params.end() && quality_it != params.end()) {
+                                runtime_config.screenshot_compression = (comp_it->second == "1" || comp_it->second == "true");
+                                runtime_config.screenshot_format = runtime_config.screenshot_compression ? "jpg" : "png";
+                                runtime_config.screenshot_width = std::stoi(width_it->second);
+                                runtime_config.screenshot_height = std::stoi(height_it->second);
+                                runtime_config.screenshot_quality = std::clamp(std::stoi(quality_it->second), 10, 100);
+                            }
+                        }
                     }
                     std::string screenshot_path;
                     std::string error;
