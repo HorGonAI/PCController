@@ -68,7 +68,8 @@ webapp.url=https://horgonai.github.io/PCController/
 
 ## Веб-интерфейс
 
-Статическая страница находится в `docs/` и подходит для GitHub Pages. Там есть кнопка отправки команды скриншота через Telegram Web App.
+Файлы `index.html`, `app.js` и `styles.css` лежат в корне репозитория и используются GitHub Pages вместо `README.md`.
+Страница содержит кнопку отправки команды скриншота через Telegram Web App.
 
 ## Безопасность
 
