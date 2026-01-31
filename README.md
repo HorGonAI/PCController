@@ -36,7 +36,7 @@ export TELEGRAM_BOT_TOKEN="<TOKEN>"
 3. Отредактируйте `config/config.ini`:
 
 ```ini
-allowed_chat_ids=6538203145
+allowed_chat_ids=
 screenshot.width=1280
 screenshot.height=720
 screenshot.compression=true
@@ -45,7 +45,7 @@ screenshot.format=jpg
 webapp.url=https://horgonai.github.io/PCController/
 ```
 
-`allowed_chat_ids` — список разрешённых чатов (через запятую). Настройки `screenshot.*` управляют разрешением и форматом снимка.
+`allowed_chat_ids` — список разрешённых чатов (через запятую). Пустое значение отключает whitelist. Настройки `screenshot.*` управляют разрешением и форматом снимка.
 `webapp.url` добавляет кнопку **Open** в меню вложений Telegram и должен указывать на ваш веб-интерфейс.
 
 ## Запуск
