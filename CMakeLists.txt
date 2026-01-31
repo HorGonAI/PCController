@@ -22,5 +22,5 @@ target_link_libraries(pccontroller
 )
 
 if(WIN32)
-    target_link_libraries(pccontroller PRIVATE Gdiplus)
+    target_link_libraries(pccontroller PRIVATE windowscodecs ole32)
 endif()

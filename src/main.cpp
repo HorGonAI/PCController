@@ -19,8 +19,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#include <gdiplus.h>
-#pragma comment(lib, "Gdiplus.lib")
+#include <wincodec.h>
 #endif
 
 namespace {
@@ -455,13 +454,6 @@ bool captureScreenshot(const Config& config, std::string& path, std::string& err
     path = buildScreenshotPath(format);
 
 #if defined(_WIN32)
-    ULONG_PTR gdiplus_token = 0;
-    Gdiplus::GdiplusStartupInput gdiplus_startup;
-    if (Gdiplus::GdiplusStartup(&gdiplus_token, &gdiplus_startup, nullptr) != Gdiplus::Ok) {
-        error = "Failed to initialize GDI+.";
-        return false;
-    }
-
     HDC screen_dc = GetDC(nullptr);
     HDC memory_dc = CreateCompatibleDC(screen_dc);
     int screen_width = GetSystemMetrics(SM_CXSCREEN);
@@ -471,7 +463,6 @@ bool captureScreenshot(const Config& config, std::string& path, std::string& err
         error = "Failed to capture screenshot.";
         DeleteDC(memory_dc);
         ReleaseDC(nullptr, screen_dc);
-        Gdiplus::GdiplusShutdown(gdiplus_token);
         return false;
     }
 
@@ -484,69 +475,226 @@ bool captureScreenshot(const Config& config, std::string& path, std::string& err
     if (!blt_ok) {
         error = "Failed to capture screenshot.";
         DeleteObject(screen_bitmap);
-        Gdiplus::GdiplusShutdown(gdiplus_token);
         return false;
     }
-
-    Gdiplus::Bitmap original(screen_bitmap, nullptr);
-    DeleteObject(screen_bitmap);
 
     int target_width = config.screenshot_width > 0 ? config.screenshot_width : screen_width;
     int target_height = config.screenshot_height > 0 ? config.screenshot_height : screen_height;
-    Gdiplus::Bitmap resized(target_width, target_height, PixelFormat32bppARGB);
-    {
-        Gdiplus::Graphics graphics(&resized);
-        graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-        graphics.DrawImage(&original, 0, 0, target_width, target_height);
+
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool should_uninit = (hr == S_OK || hr == S_FALSE);
+    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
+        DeleteObject(screen_bitmap);
+        error = "Failed to initialize COM.";
+        return false;
     }
 
-    auto getEncoderClsid = [](const WCHAR* format, CLSID* clsid) -> bool {
-        UINT num = 0;
-        UINT size = 0;
-        if (Gdiplus::GetImageEncodersSize(&num, &size) != Gdiplus::Ok || size == 0) {
-            return false;
+    IWICImagingFactory* factory = nullptr;
+    hr = CoCreateInstance(
+        CLSID_WICImagingFactory,
+        nullptr,
+        CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&factory));
+    if (FAILED(hr)) {
+        if (should_uninit) {
+            CoUninitialize();
         }
-        std::vector<BYTE> buffer(size);
-        auto* encoders = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buffer.data());
-        if (Gdiplus::GetImageEncoders(num, size, encoders) != Gdiplus::Ok) {
-            return false;
+        DeleteObject(screen_bitmap);
+        error = "Failed to create WIC factory.";
+        return false;
+    }
+
+    IWICBitmap* wic_bitmap = nullptr;
+    hr = factory->CreateBitmapFromHBITMAP(screen_bitmap, nullptr, WICBitmapUseAlpha, &wic_bitmap);
+    DeleteObject(screen_bitmap);
+    if (FAILED(hr)) {
+        factory->Release();
+        if (should_uninit) {
+            CoUninitialize();
         }
-        for (UINT i = 0; i < num; ++i) {
-            if (wcscmp(encoders[i].MimeType, format) == 0) {
-                *clsid = encoders[i].Clsid;
-                return true;
+        error = "Failed to create WIC bitmap.";
+        return false;
+    }
+
+    IWICBitmapSource* source = wic_bitmap;
+    IWICBitmapScaler* scaler = nullptr;
+    if (target_width != screen_width || target_height != screen_height) {
+        hr = factory->CreateBitmapScaler(&scaler);
+        if (SUCCEEDED(hr)) {
+            hr = scaler->Initialize(wic_bitmap, target_width, target_height, WICBitmapInterpolationModeFant);
+            if (SUCCEEDED(hr)) {
+                source = scaler;
             }
         }
-        return false;
-    };
-
-    CLSID encoder_clsid;
-    const WCHAR* mime = (format == "jpg" || format == "jpeg") ? L"image/jpeg" : L"image/png";
-    if (!getEncoderClsid(mime, &encoder_clsid)) {
-        error = "Failed to find image encoder.";
-        Gdiplus::GdiplusShutdown(gdiplus_token);
-        return false;
     }
 
-    Gdiplus::EncoderParameters encoder_params;
-    encoder_params.Count = 0;
-    if (format == "jpg" || format == "jpeg") {
-        encoder_params.Count = 1;
-        encoder_params.Parameter[0].Guid = Gdiplus::EncoderQuality;
-        encoder_params.Parameter[0].Type = Gdiplus::EncoderParameterValueTypeLong;
-        encoder_params.Parameter[0].NumberOfValues = 1;
-        ULONG quality = static_cast<ULONG>(config.screenshot_quality);
-        encoder_params.Parameter[0].Value = &quality;
+    IWICStream* stream = nullptr;
+    hr = factory->CreateStream(&stream);
+    if (FAILED(hr)) {
+        if (scaler) {
+            scaler->Release();
+        }
+        wic_bitmap->Release();
+        factory->Release();
+        if (should_uninit) {
+            CoUninitialize();
+        }
+        error = "Failed to create WIC stream.";
+        return false;
     }
 
     std::wstring wide_path(path.begin(), path.end());
-    Gdiplus::Status save_status = resized.Save(
-        wide_path.c_str(),
-        &encoder_clsid,
-        encoder_params.Count ? &encoder_params : nullptr);
+    hr = stream->InitializeFromFilename(wide_path.c_str(), GENERIC_WRITE);
+    if (FAILED(hr)) {
+        stream->Release();
+        if (scaler) {
+            scaler->Release();
+        }
+        wic_bitmap->Release();
+        factory->Release();
+        if (should_uninit) {
+            CoUninitialize();
+        }
+        error = "Failed to open output file.";
+        return false;
+    }
 
-    Gdiplus::GdiplusShutdown(gdiplus_token);
-    if (save_status != Gdiplus::Ok) {
+    GUID container = (format == "jpg" || format == "jpeg") ? GUID_ContainerFormatJpeg : GUID_ContainerFormatPng;
+    IWICBitmapEncoder* encoder = nullptr;
+    hr = factory->CreateEncoder(container, nullptr, &encoder);
+    if (FAILED(hr)) {
+        stream->Release();
+        if (scaler) {
+            scaler->Release();
+        }
+        wic_bitmap->Release();
+        factory->Release();
+        if (should_uninit) {
+            CoUninitialize();
+        }
+        error = "Failed to create WIC encoder.";
+        return false;
+    }
+
+    hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
+    if (FAILED(hr)) {
+        encoder->Release();
+        stream->Release();
+        if (scaler) {
+            scaler->Release();
+        }
+        wic_bitmap->Release();
+        factory->Release();
+        if (should_uninit) {
+            CoUninitialize();
+        }
+        error = "Failed to initialize encoder.";
+        return false;
+    }
+
+    IWICBitmapFrameEncode* frame = nullptr;
+    IPropertyBag2* props = nullptr;
+    hr = encoder->CreateNewFrame(&frame, &props);
+    if (FAILED(hr)) {
+        encoder->Release();
+        stream->Release();
+        if (scaler) {
+            scaler->Release();
+        }
+        wic_bitmap->Release();
+        factory->Release();
+        if (should_uninit) {
+            CoUninitialize();
+        }
+        error = "Failed to create encoder frame.";
+        return false;
+    }
+
+    if (props && (format == "jpg" || format == "jpeg")) {
+        PROPBAG2 option = {};
+        option.pstrName = const_cast<LPOLESTR>(L"ImageQuality");
+        VARIANT var;
+        VariantInit(&var);
+        var.vt = VT_R4;
+        var.fltVal = static_cast<float>(config.screenshot_quality) / 100.0f;
+        props->Write(1, &option, &var);
+        VariantClear(&var);
+    }
+
+    hr = frame->Initialize(props);
+    if (props) {
+        props->Release();
+    }
+    if (FAILED(hr)) {
+        frame->Release();
+        encoder->Release();
+        stream->Release();
+        if (scaler) {
+            scaler->Release();
+        }
+        wic_bitmap->Release();
+        factory->Release();
+        if (should_uninit) {
+            CoUninitialize();
+        }
+        error = "Failed to initialize frame.";
+        return false;
+    }
+
+    hr = frame->SetSize(target_width, target_height);
+    if (FAILED(hr)) {
+        frame->Release();
+        encoder->Release();
+        stream->Release();
+        if (scaler) {
+            scaler->Release();
+        }
+        wic_bitmap->Release();
+        factory->Release();
+        if (should_uninit) {
+            CoUninitialize();
+        }
+        error = "Failed to set frame size.";
+        return false;
+    }
+
+    WICPixelFormatGUID pixel_format = GUID_WICPixelFormat32bppBGRA;
+    frame->SetPixelFormat(&pixel_format);
+    hr = frame->WriteSource(source, nullptr);
+    if (FAILED(hr)) {
+        frame->Release();
+        encoder->Release();
+        stream->Release();
+        if (scaler) {
+            scaler->Release();
+        }
+        wic_bitmap->Release();
+        factory->Release();
+        if (should_uninit) {
+            CoUninitialize();
+        }
+        error = "Failed to write frame.";
+        return false;
+    }
+
+    hr = frame->Commit();
+    if (SUCCEEDED(hr)) {
+        hr = encoder->Commit();
+    }
+
+    frame->Release();
+    encoder->Release();
+    stream->Release();
+    if (scaler) {
+        scaler->Release();
+    }
+    wic_bitmap->Release();
+    factory->Release();
+    if (should_uninit) {
+        CoUninitialize();
+    }
+
+    if (FAILED(hr)) {
         error = "Failed to save screenshot.";
         return false;
     }
