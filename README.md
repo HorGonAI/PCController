@@ -42,7 +42,7 @@ screenshot.height=720
 screenshot.compression=true
 screenshot.quality=85
 screenshot.format=jpg
-webapp.url=https://your-domain.example/app
+webapp.url=https://horgonai.github.io/PCController/
 ```
 
 `allowed_chat_ids` — список разрешённых чатов (через запятую). Настройки `screenshot.*` управляют разрешением и форматом снимка.
