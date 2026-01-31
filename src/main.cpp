@@ -135,16 +135,6 @@ std::filesystem::path getExecutableDir(const char* argv0) {
     return std::filesystem::current_path();
 }
 
-bool tryLoadConfig(const std::string& path, Config& config, std::string& error) {
-    try {
-        config = loadConfig(path);
-        return true;
-    } catch (const std::exception& ex) {
-        error = ex.what();
-        return false;
-    }
-}
-
 Config loadConfig(const std::string& path) {
     std::ifstream file(path);
     if (!file) {
@@ -193,6 +183,16 @@ Config loadConfig(const std::string& path) {
     }
 
     return config;
+}
+
+bool tryLoadConfig(const std::string& path, Config& config, std::string& error) {
+    try {
+        config = loadConfig(path);
+        return true;
+    } catch (const std::exception& ex) {
+        error = ex.what();
+        return false;
+    }
 }
 
 void appendUtf8(std::string& output, std::uint32_t codepoint) {
