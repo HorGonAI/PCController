@@ -944,7 +944,7 @@ int main(int argc, char* argv[]) {
     std::unordered_set<long long> menu_button_set;
     while (true) {
         try {
-            std::string url = "https://api.telegram.org/bot" + token + "/getUpdates?timeout=5&allowed_updates=message&offset=" + std::to_string(offset);
+            std::string url = "https://api.telegram.org/bot" + token + "/getUpdates?timeout=5&offset=" + std::to_string(offset);
             std::string response = httpGet(url);
             auto updates = parseUpdates(response);
 
