@@ -392,6 +392,28 @@ bool parseWebAppSettings(const std::string& data, bool& compression, int& width,
     return true;
 }
 
+bool parseWebAppScreenshotSettings(const std::string& data, bool& compression, int& width, int& height, int& quality) {
+    std::string action;
+    if (!findStringAfterKey(data, "\"action\"", 0, action) || action != "screenshot") {
+        return false;
+    }
+    std::string compression_value;
+    std::string width_value;
+    std::string height_value;
+    std::string quality_value;
+    if (!findRawValueAfterKey(data, "\"compression\"", 0, compression_value) ||
+        !findRawValueAfterKey(data, "\"width\"", 0, width_value) ||
+        !findRawValueAfterKey(data, "\"height\"", 0, height_value) ||
+        !findRawValueAfterKey(data, "\"quality\"", 0, quality_value)) {
+        return false;
+    }
+    compression = (compression_value == "true" || compression_value == "1");
+    width = std::stoi(width_value);
+    height = std::stoi(height_value);
+    quality = std::stoi(quality_value);
+    return true;
+}
+
 bool parseWebAppAction(const std::string& data, std::string& action) {
     if (!findStringAfterKey(data, "\"action\"", 0, action)) {
         return false;
@@ -967,6 +989,17 @@ int main(int argc, char* argv[]) {
                 std::string action;
                 bool has_action = parseWebAppAction(update.web_app_data, action);
                 if (update.web_app_data == "screenshot" || (has_action && action == "screenshot")) {
+                    bool compression = runtime_config.screenshot_compression;
+                    int width = runtime_config.screenshot_width;
+                    int height = runtime_config.screenshot_height;
+                    int quality = runtime_config.screenshot_quality;
+                    if (parseWebAppScreenshotSettings(update.web_app_data, compression, width, height, quality)) {
+                        runtime_config.screenshot_compression = compression;
+                        runtime_config.screenshot_format = compression ? "jpg" : "png";
+                        runtime_config.screenshot_width = width;
+                        runtime_config.screenshot_height = height;
+                        runtime_config.screenshot_quality = std::clamp(quality, 10, 100);
+                    }
                     std::string screenshot_path;
                     std::string error;
                     if (!captureScreenshot(runtime_config, screenshot_path, error)) {

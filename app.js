@@ -49,17 +49,14 @@ const sendWebAppData = (payload) => {
   tg.sendData(JSON.stringify(payload));
 };
 
-const sendSettings = () => {
+const buildSettingsPayload = () => {
   const [width, height] = resolutionSelect.value.split("x").map(Number);
-  const payload = {
-    action: "settings",
+  return {
     compression: compressionToggle.checked,
     width,
     height,
     quality: Number(qualityRange.value),
   };
-  sendWebAppData(payload);
-  setStatus("Настройки отправлены.");
 };
 
 const initialSettings = loadSettings();
@@ -74,7 +71,6 @@ if (!tg) {
 } else {
   tg.ready();
   tg.expand();
-  sendSettings();
 }
 
 qualityRange.addEventListener("input", () => {
@@ -88,7 +84,7 @@ const handleSettingsChange = () => {
     quality: Number(qualityRange.value),
   };
   saveSettings(settings);
-  sendSettings();
+  setStatus("Настройки сохранены локально.");
 };
 
 qualityRange.addEventListener("change", handleSettingsChange);
@@ -104,8 +100,9 @@ screenshotBtn.addEventListener("click", () => {
   if (!tg) {
     return;
   }
-  tg.sendData("screenshot");
-  if (typeof tg.close === "function") {
-    tg.close();
-  }
+  const payload = {
+    action: "screenshot",
+    ...buildSettingsPayload(),
+  };
+  tg.sendData(JSON.stringify(payload));
 });
