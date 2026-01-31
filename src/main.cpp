@@ -41,14 +41,6 @@ struct Config {
     std::string webapp_url;
 };
 
-enum class MenuState {
-    Main,
-    Settings,
-    Quality,
-    ScreenshotSettings,
-    ResolutionSelect
-};
-
 constexpr std::size_t kMaxMessageLength = 3500;
 
 size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
@@ -724,43 +716,10 @@ bool captureScreenshot(const Config& config, std::string& path, std::string& err
 #endif
 }
 
-std::string buildMainKeyboard(const Config& config) {
-    std::ostringstream keyboard;
-    keyboard << "{\"keyboard\":[";
-    keyboard << "[{\"text\":\"Скриншот\"}],";
-    keyboard << "[{\"text\":\"Настройки\"}]";
-    if (!config.webapp_url.empty()) {
-        keyboard << ",[{\"text\":\"Open\",\"web_app\":{\"url\":\"" << config.webapp_url << "\"}}]";
-    }
-    keyboard << "],\"resize_keyboard\":true}";
-    return keyboard.str();
-}
-
-std::string buildSettingsKeyboard(const Config& config) {
-    std::ostringstream keyboard;
-    keyboard << "{\"keyboard\":[";
-    keyboard << "[{\"text\":\"Качество\"}],";
-    keyboard << "[{\"text\":\"Назад\"}]";
-    keyboard << "],\"resize_keyboard\":true}";
-    return keyboard.str();
-}
-
-std::string buildQualityKeyboard() {
-    return "{\"keyboard\":[[{\"text\":\"Скриншоты\"}],[{\"text\":\"Назад\"}]],\"resize_keyboard\":true}";
-}
-
-std::string buildScreenshotSettingsKeyboard(const Config& config) {
-    std::ostringstream keyboard;
-    keyboard << "{\"keyboard\":[";
-    keyboard << "[{\"text\":\"Сжатие: " << (config.screenshot_compression ? "Вкл" : "Выкл") << "\"}],";
-    keyboard << "[{\"text\":\"Разрешение: " << config.screenshot_width << "x" << config.screenshot_height << "\"}],";
-    keyboard << "[{\"text\":\"Назад\"}]";
-    keyboard << "],\"resize_keyboard\":true}";
-    return keyboard.str();
-}
-
-std::string buildResolutionKeyboard() {
-    return "{\"keyboard\":[[{\"text\":\"Разрешение 1280x720\"}],[{\"text\":\"Разрешение 1920x1080\"}],[{\"text\":\"Назад\"}]],\"resize_keyboard\":true}";
+std::string buildWebAppMenuButton(const std::string& url) {
+    std::ostringstream button;
+    button << "{\"type\":\"web_app\",\"text\":\"Open\",\"web_app\":{\"url\":\"" << url << "\"}}";
+    return button.str();
 }
 
 std::string getStatus() {
@@ -798,7 +757,7 @@ std::string buildHelp(const Config& config) {
     return help.str();
 }
 
-void sendMessage(const std::string& token, long long chat_id, const std::string& text, const std::string& reply_markup = "") {
+void sendMessage(const std::string& token, long long chat_id, const std::string& text) {
     CURL* curl = curl_easy_init();
     if (!curl) {
         throw std::runtime_error("Failed to init curl");
@@ -806,11 +765,20 @@ void sendMessage(const std::string& token, long long chat_id, const std::string&
 
     std::string escaped = escapeForUrl(curl, text);
     std::string data = "chat_id=" + std::to_string(chat_id) + "&text=" + escaped;
-    if (!reply_markup.empty()) {
-        std::string escaped_markup = escapeForUrl(curl, reply_markup);
-        data += "&reply_markup=" + escaped_markup;
-    }
     std::string url = "https://api.telegram.org/bot" + token + "/sendMessage";
+    curl_easy_cleanup(curl);
+    httpPost(url, data);
+}
+
+void setMenuButton(const std::string& token, long long chat_id, const std::string& menu_button_json) {
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        throw std::runtime_error("Failed to init curl");
+    }
+
+    std::string escaped_button = escapeForUrl(curl, menu_button_json);
+    std::string data = "chat_id=" + std::to_string(chat_id) + "&menu_button=" + escaped_button;
+    std::string url = "https://api.telegram.org/bot" + token + "/setChatMenuButton";
     curl_easy_cleanup(curl);
     httpPost(url, data);
 }
@@ -903,7 +871,6 @@ int main(int argc, char* argv[]) {
 
     long long offset = 0;
     Config runtime_config = config;
-    MenuState menu_state = MenuState::Main;
     while (true) {
         try {
             std::string url = "https://api.telegram.org/bot" + token + "/getUpdates?timeout=5&allowed_updates=message&offset=" + std::to_string(offset);
@@ -920,67 +887,23 @@ int main(int argc, char* argv[]) {
                 }
 
                 std::string text = trim(update.text);
-                if (text == "Скриншот") {
+                if (!runtime_config.webapp_url.empty()) {
+                    setMenuButton(token, update.chat_id, buildWebAppMenuButton(runtime_config.webapp_url));
+                }
+
+                if (text == "Скриншот" || text == "/screenshot") {
                     std::string screenshot_path;
                     std::string error;
                     if (!captureScreenshot(runtime_config, screenshot_path, error)) {
-                        sendMessage(token, update.chat_id, error, buildMainKeyboard(runtime_config));
+                        sendMessage(token, update.chat_id, error);
                     } else {
                         sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
-                        sendMessage(token, update.chat_id, "Готово.", buildMainKeyboard(runtime_config));
-                    }
-                    menu_state = MenuState::Main;
-                } else if (text == "Настройки") {
-                    sendMessage(token, update.chat_id, "Выберите параметр.", buildSettingsKeyboard(runtime_config));
-                    menu_state = MenuState::Settings;
-                } else if (text == "Качество") {
-                    sendMessage(token, update.chat_id, "Раздел качества.", buildQualityKeyboard());
-                    menu_state = MenuState::Quality;
-                } else if (text == "Скриншоты") {
-                    sendMessage(token, update.chat_id, "Настройки скриншотов.", buildScreenshotSettingsKeyboard(runtime_config));
-                    menu_state = MenuState::ScreenshotSettings;
-                } else if (text.rfind("Разрешение:", 0) == 0) {
-                    sendMessage(token, update.chat_id, "Выберите разрешение.", buildResolutionKeyboard());
-                    menu_state = MenuState::ResolutionSelect;
-                } else if (text == "Разрешение 1280x720") {
-                    runtime_config.screenshot_width = 1280;
-                    runtime_config.screenshot_height = 720;
-                    sendMessage(token, update.chat_id, "Разрешение установлено 1280x720.", buildScreenshotSettingsKeyboard(runtime_config));
-                    menu_state = MenuState::ScreenshotSettings;
-                } else if (text == "Разрешение 1920x1080") {
-                    runtime_config.screenshot_width = 1920;
-                    runtime_config.screenshot_height = 1080;
-                    sendMessage(token, update.chat_id, "Разрешение установлено 1920x1080.", buildScreenshotSettingsKeyboard(runtime_config));
-                    menu_state = MenuState::ScreenshotSettings;
-                } else if (text.rfind("Сжатие", 0) == 0) {
-                    runtime_config.screenshot_compression = !runtime_config.screenshot_compression;
-                    runtime_config.screenshot_format = runtime_config.screenshot_compression ? "jpg" : "png";
-                    std::string status = runtime_config.screenshot_compression ? "Вкл" : "Выкл";
-                    sendMessage(token, update.chat_id, "Сжатие: " + status + ".", buildScreenshotSettingsKeyboard(runtime_config));
-                    menu_state = MenuState::ScreenshotSettings;
-                } else if (text == "Назад") {
-                    if (menu_state == MenuState::ResolutionSelect) {
-                        sendMessage(token, update.chat_id, "Настройки скриншотов.", buildScreenshotSettingsKeyboard(runtime_config));
-                        menu_state = MenuState::ScreenshotSettings;
-                    } else if (menu_state == MenuState::ScreenshotSettings) {
-                        sendMessage(token, update.chat_id, "Раздел качества.", buildQualityKeyboard());
-                        menu_state = MenuState::Quality;
-                    } else if (menu_state == MenuState::Quality) {
-                        sendMessage(token, update.chat_id, "Выберите параметр.", buildSettingsKeyboard(runtime_config));
-                        menu_state = MenuState::Settings;
-                    } else if (menu_state == MenuState::Settings) {
-                        sendMessage(token, update.chat_id, "Главное меню.", buildMainKeyboard(runtime_config));
-                        menu_state = MenuState::Main;
-                    } else {
-                        sendMessage(token, update.chat_id, "Главное меню.", buildMainKeyboard(runtime_config));
-                        menu_state = MenuState::Main;
+                        sendMessage(token, update.chat_id, "Готово.");
                     }
                 } else if (text == "/start") {
-                    sendMessage(token, update.chat_id, "PCController is online.", buildMainKeyboard(runtime_config));
-                    menu_state = MenuState::Main;
+                    sendMessage(token, update.chat_id, "PCController is online.");
                 } else {
-                    sendMessage(token, update.chat_id, "Используйте кнопки клавиатуры.", buildMainKeyboard(runtime_config));
-                    menu_state = MenuState::Main;
+                    sendMessage(token, update.chat_id, "Используйте /screenshot для снимка экрана.");
                 }
             }
         } catch (const std::exception& ex) {
