@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PCController Web</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <main class="app">
+      <header class="app__header">
+        <h1>PCController</h1>
+        <p>Веб-панель для управления ботом и ПК через Telegram Web App.</p>
+      </header>
+
+      <section class="panel">
+        <h2>Быстрые действия</h2>
+        <div class="panel__buttons">
+          <button class="btn" id="screenshot-btn">Сделать скриншот</button>
+        </div>
+        <p class="panel__hint" id="status">Ожидание команды…</p>
+      </section>
+
+      <section class="panel">
+        <h2>Настройки скриншота</h2>
+        <p>Настройки находятся в конфиге на ПК: разрешение и сжатие.</p>
+        <ul>
+          <li>Разрешение: задаётся в <code>config.ini</code></li>
+          <li>Сжатие: включается параметром <code>screenshot.compression</code></li>
+        </ul>
+      </section>
+
+      <section class="panel panel--warning" id="webapp-warning" hidden>
+        <h2>Внимание</h2>
+        <p>Откройте страницу через кнопку <strong>Open</strong> в Telegram для управления.</p>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

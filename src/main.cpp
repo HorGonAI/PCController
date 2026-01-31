@@ -28,6 +28,7 @@ struct Update {
     long long update_id = 0;
     long long chat_id = 0;
     std::string text;
+    std::string web_app_data;
 };
 
 struct Config {
@@ -336,6 +337,14 @@ bool findStringAfterKey(const std::string& input, const std::string& key, std::s
     return parseJsonString(input, quote_pos, value);
 }
 
+bool findWebAppData(const std::string& input, std::size_t start_pos, std::string& value) {
+    auto web_app_pos = input.find("\"web_app_data\"", start_pos);
+    if (web_app_pos == std::string::npos) {
+        return false;
+    }
+    return findStringAfterKey(input, "\"data\"", web_app_pos, value);
+}
+
 std::vector<Update> parseUpdates(const std::string& input) {
     std::vector<Update> updates;
     std::size_t pos = 0;
@@ -370,7 +379,14 @@ std::vector<Update> parseUpdates(const std::string& input) {
         }
 
         std::string text;
-        if (!findStringAfterKey(input, "\"text\"", message_pos, text)) {
+        bool has_text = findStringAfterKey(input, "\"text\"", message_pos, text);
+
+        std::string web_app_data;
+        if (findWebAppData(input, message_pos, web_app_data)) {
+            update.web_app_data = web_app_data;
+        }
+
+        if (!has_text && update.web_app_data.empty()) {
             pos = message_pos + 1;
             continue;
         }
@@ -891,7 +907,16 @@ int main(int argc, char* argv[]) {
                     setMenuButton(token, update.chat_id, buildWebAppMenuButton(runtime_config.webapp_url));
                 }
 
-                if (text == "Скриншот" || text == "/screenshot") {
+                if (update.web_app_data == "screenshot") {
+                    std::string screenshot_path;
+                    std::string error;
+                    if (!captureScreenshot(runtime_config, screenshot_path, error)) {
+                        sendMessage(token, update.chat_id, error);
+                    } else {
+                        sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
+                        sendMessage(token, update.chat_id, "Готово.");
+                    }
+                } else if (text == "Скриншот" || text == "/screenshot") {
                     std::string screenshot_path;
                     std::string error;
                     if (!captureScreenshot(runtime_config, screenshot_path, error)) {
