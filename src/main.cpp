@@ -38,6 +38,7 @@ struct Config {
     bool screenshot_compression = true;
     int screenshot_quality = 85;
     std::string screenshot_format = "jpg";
+    std::string webapp_url;
 };
 
 enum class MenuState {
@@ -179,6 +180,8 @@ Config loadConfig(const std::string& path) {
             config.screenshot_quality = std::stoi(value);
         } else if (key == "screenshot.format") {
             config.screenshot_format = value;
+        } else if (key == "webapp.url") {
+            config.webapp_url = value;
         }
     }
 
@@ -721,8 +724,16 @@ bool captureScreenshot(const Config& config, std::string& path, std::string& err
 #endif
 }
 
-std::string buildMainKeyboard() {
-    return R"({"keyboard":[[{"text":"Скриншот"}],[{"text":"Настройки"}]],"resize_keyboard":true})";
+std::string buildMainKeyboard(const Config& config) {
+    std::ostringstream keyboard;
+    keyboard << "{\"keyboard\":[";
+    keyboard << "[{\"text\":\"Скриншот\"}],";
+    keyboard << "[{\"text\":\"Настройки\"}]";
+    if (!config.webapp_url.empty()) {
+        keyboard << ",[{\"text\":\"Open\",\"web_app\":{\"url\":\"" << config.webapp_url << "\"}}]";
+    }
+    keyboard << "],\"resize_keyboard\":true}";
+    return keyboard.str();
 }
 
 std::string buildSettingsKeyboard(const Config& config) {
@@ -913,10 +924,10 @@ int main(int argc, char* argv[]) {
                     std::string screenshot_path;
                     std::string error;
                     if (!captureScreenshot(runtime_config, screenshot_path, error)) {
-                        sendMessage(token, update.chat_id, error, buildMainKeyboard());
+                        sendMessage(token, update.chat_id, error, buildMainKeyboard(runtime_config));
                     } else {
                         sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
-                        sendMessage(token, update.chat_id, "Готово.", buildMainKeyboard());
+                        sendMessage(token, update.chat_id, "Готово.", buildMainKeyboard(runtime_config));
                     }
                     menu_state = MenuState::Main;
                 } else if (text == "Настройки") {
@@ -958,17 +969,17 @@ int main(int argc, char* argv[]) {
                         sendMessage(token, update.chat_id, "Выберите параметр.", buildSettingsKeyboard(runtime_config));
                         menu_state = MenuState::Settings;
                     } else if (menu_state == MenuState::Settings) {
-                        sendMessage(token, update.chat_id, "Главное меню.", buildMainKeyboard());
+                        sendMessage(token, update.chat_id, "Главное меню.", buildMainKeyboard(runtime_config));
                         menu_state = MenuState::Main;
                     } else {
-                        sendMessage(token, update.chat_id, "Главное меню.", buildMainKeyboard());
+                        sendMessage(token, update.chat_id, "Главное меню.", buildMainKeyboard(runtime_config));
                         menu_state = MenuState::Main;
                     }
                 } else if (text == "/start") {
-                    sendMessage(token, update.chat_id, "PCController is online.", buildMainKeyboard());
+                    sendMessage(token, update.chat_id, "PCController is online.", buildMainKeyboard(runtime_config));
                     menu_state = MenuState::Main;
                 } else {
-                    sendMessage(token, update.chat_id, "Используйте кнопки клавиатуры.", buildMainKeyboard());
+                    sendMessage(token, update.chat_id, "Используйте кнопки клавиатуры.", buildMainKeyboard(runtime_config));
                     menu_state = MenuState::Main;
                 }
             }
