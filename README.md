@@ -43,10 +43,12 @@ screenshot.compression=true
 screenshot.quality=85
 screenshot.format=jpg
 webapp.url=https://horgonai.github.io/PCController/
+debug.log_path=
 ```
 
 `allowed_chat_ids` — список разрешённых чатов (через запятую). Пустое значение отключает whitelist. Настройки `screenshot.*` управляют разрешением и форматом снимка.
 `webapp.url` добавляет кнопку **Open** в меню вложений Telegram и должен указывать на ваш веб-интерфейс.
+`debug.log_path` включает логирование входящих обновлений и Web App данных (указывать путь к файлу, оставьте пустым для отключения).
 
 ## Запуск
 

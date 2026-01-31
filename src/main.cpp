@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -40,6 +42,7 @@ struct Config {
     int screenshot_quality = 85;
     std::string screenshot_format = "jpg";
     std::string webapp_url;
+    std::string debug_log_path;
 };
 
 constexpr std::size_t kMaxMessageLength = 3500;
@@ -112,6 +115,31 @@ std::string trim(const std::string& input) {
     return input.substr(start, end - start + 1);
 }
 
+std::string currentTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm local_tm{};
+#ifdef _WIN32
+    localtime_s(&local_tm, &now_time);
+#else
+    localtime_r(&now_time, &local_tm);
+#endif
+    std::ostringstream oss;
+    oss << std::put_time(&local_tm, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
+void logDebug(const Config& config, const std::string& message) {
+    if (config.debug_log_path.empty()) {
+        return;
+    }
+    std::ofstream log_file(config.debug_log_path, std::ios::app);
+    if (!log_file) {
+        return;
+    }
+    log_file << "[" << currentTimestamp() << "] " << message << "\n";
+}
+
 std::filesystem::path getExecutableDir(const char* argv0) {
 #ifdef _WIN32
     char path_buffer[MAX_PATH] = {0};
@@ -175,6 +203,8 @@ Config loadConfig(const std::string& path) {
             config.screenshot_format = value;
         } else if (key == "webapp.url") {
             config.webapp_url = value;
+        } else if (key == "debug.log_path") {
+            config.debug_log_path = value;
         }
     }
 
@@ -1025,10 +1055,26 @@ int main(int argc, char* argv[]) {
         try {
             std::string url = "https://api.telegram.org/bot" + token + "/getUpdates?timeout=5&offset=" + std::to_string(offset);
             std::string response = httpGet(url);
+            if (!runtime_config.debug_log_path.empty()) {
+                std::string preview = response;
+                constexpr std::size_t kMaxLogSize = 8000;
+                if (preview.size() > kMaxLogSize) {
+                    preview = preview.substr(0, kMaxLogSize) + "...(truncated)";
+                }
+                logDebug(runtime_config, "getUpdates response: " + preview);
+            }
             auto updates = parseUpdates(response);
 
             for (const auto& update : updates) {
                 offset = (std::max)(offset, update.update_id + 1);
+                if (!runtime_config.debug_log_path.empty()) {
+                    std::ostringstream oss;
+                    oss << "update_id=" << update.update_id
+                        << " chat_id=" << update.chat_id
+                        << " text=\"" << update.text << "\""
+                        << " web_app_data=\"" << update.web_app_data << "\"";
+                    logDebug(runtime_config, oss.str());
+                }
 
                 if (!config.allowed_chat_ids.empty() &&
                     config.allowed_chat_ids.find(update.chat_id) == config.allowed_chat_ids.end()) {
