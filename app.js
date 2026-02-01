@@ -41,14 +41,6 @@ const saveSettings = (settings) => {
   localStorage.setItem("pccontroller.settings", JSON.stringify(settings));
 };
 
-const sendWebAppData = (payload) => {
-  if (!tg) {
-    setStatus("Команда недоступна вне Telegram.");
-    return;
-  }
-  tg.sendData(JSON.stringify(payload));
-};
-
 const buildSettingsPayload = () => {
   const [width, height] = resolutionSelect.value.split("x").map(Number);
   return {
@@ -109,8 +101,5 @@ screenshotBtn.addEventListener("click", () => {
     return;
   }
   setStatus("Команда отправлена, ожидайте скриншот в чате.");
-  if (!tg) {
-    return;
-  }
   tg.sendData(buildQueryPayload("screenshot"));
 });
