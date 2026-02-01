@@ -437,6 +437,18 @@ bool parseQueryString(const std::string& input, std::map<std::string, std::strin
     return !params.empty();
 }
 
+bool parseQueryStringWithDecode(const std::string& input, std::map<std::string, std::string>& params) {
+    if (parseQueryString(input, params)) {
+        return true;
+    }
+    std::string decoded = urlDecode(input);
+    if (decoded != input) {
+        params.clear();
+        return parseQueryString(decoded, params);
+    }
+    return false;
+}
+
 bool findWebAppData(const std::string& input, std::size_t start_pos, std::string& value) {
     auto web_app_pos = input.find("\"web_app_data\"", start_pos);
     if (web_app_pos == std::string::npos) {
@@ -498,7 +510,7 @@ bool parseWebAppAction(const std::string& data, std::string& action) {
         return true;
     }
     std::map<std::string, std::string> params;
-    if (parseQueryString(data, params)) {
+    if (parseQueryStringWithDecode(data, params)) {
         auto it = params.find("action");
         if (it != params.end()) {
             action = it->second;
@@ -1104,7 +1116,7 @@ int main(int argc, char* argv[]) {
                         runtime_config.screenshot_quality = std::clamp(quality, 10, 100);
                     } else {
                         std::map<std::string, std::string> params;
-                        if (parseQueryString(update.web_app_data, params)) {
+                        if (parseQueryStringWithDecode(update.web_app_data, params)) {
                             auto comp_it = params.find("compression");
                             auto width_it = params.find("width");
                             auto height_it = params.find("height");
