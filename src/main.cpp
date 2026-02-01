@@ -48,6 +48,8 @@ struct Config {
 constexpr std::size_t kMaxMessageLength = 3500;
 constexpr const char* kDefaultLogDirectory = "C:\\Users\\Gleb\\pc\\logs";
 
+std::ofstream g_log_stream;
+
 size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     std::size_t total_size = size * nmemb;
     auto* buffer = static_cast<std::string*>(userp);
@@ -134,11 +136,31 @@ void logDebug(const Config& config, const std::string& message) {
     if (config.debug_log_path.empty()) {
         return;
     }
+    if (g_log_stream.is_open()) {
+        g_log_stream << "[" << currentTimestamp() << "] " << message << "\n";
+        g_log_stream.flush();
+        return;
+    }
     std::ofstream log_file(config.debug_log_path, std::ios::app);
     if (!log_file) {
         return;
     }
     log_file << "[" << currentTimestamp() << "] " << message << "\n";
+}
+
+void initLogOutput(const Config& config) {
+    if (config.debug_log_path.empty()) {
+        return;
+    }
+    if (g_log_stream.is_open()) {
+        return;
+    }
+    g_log_stream.open(config.debug_log_path, std::ios::app);
+    if (!g_log_stream.is_open()) {
+        return;
+    }
+    std::cout.rdbuf(g_log_stream.rdbuf());
+    std::cerr.rdbuf(g_log_stream.rdbuf());
 }
 
 std::string resolveLogPath(const std::string& configured_path) {
@@ -1080,6 +1102,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    initLogOutput(config);
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     long long offset = 0;
