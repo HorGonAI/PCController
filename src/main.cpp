@@ -45,6 +45,19 @@ struct Config {
     std::string debug_log_path;
 };
 
+enum class MenuState {
+    Main,
+    Settings,
+    QualityMenu,
+    ScreenshotMenu,
+    ResolutionMenu,
+    AwaitingQualityInput
+};
+
+struct ChatState {
+    MenuState menu = MenuState::Main;
+};
+
 constexpr std::size_t kMaxMessageLength = 3500;
 constexpr const char* kDefaultLogDirectory = "C:\\Users\\Gleb\\pc\\logs";
 
@@ -181,6 +194,54 @@ std::string resolveLogPath(const std::string& configured_path) {
     }
 
     return (log_dir / filename).string();
+}
+
+std::string joinChatIds(const std::unordered_set<long long>& ids) {
+    std::ostringstream oss;
+    bool first = true;
+    for (auto id : ids) {
+        if (!first) {
+            oss << ",";
+        }
+        first = false;
+        oss << id;
+    }
+    return oss.str();
+}
+
+void saveConfig(const std::string& path, const Config& config) {
+    std::ofstream file(path, std::ios::trunc);
+    if (!file) {
+        return;
+    }
+
+    file << "# Comma-separated list of allowed Telegram chat IDs.\n";
+    file << "# Leave empty to allow all chats\n";
+    file << "allowed_chat_ids=" << joinChatIds(config.allowed_chat_ids) << "\n\n";
+
+    file << "# Screenshot settings\n";
+    file << "screenshot.width=" << config.screenshot_width << "\n";
+    file << "screenshot.height=" << config.screenshot_height << "\n";
+    file << "screenshot.compression=" << (config.screenshot_compression ? "true" : "false") << "\n";
+    file << "screenshot.quality=" << config.screenshot_quality << "\n";
+    file << "screenshot.format=" << config.screenshot_format << "\n\n";
+
+    if (!config.webapp_url.empty()) {
+        file << "# Telegram Web App URL (shows an Open button in attachment menu)\n";
+        file << "webapp.url=" << config.webapp_url << "\n\n";
+    }
+
+    if (!config.debug_log_path.empty()) {
+        file << "# Debug logging file name (stored in C:\\Users\\Gleb\\pc\\logs)\n";
+        file << "debug.log_path=" << config.debug_log_path << "\n\n";
+    }
+
+    if (!config.commands.empty()) {
+        file << "# Allowed commands\n";
+        for (const auto& [name, cmd] : config.commands) {
+            file << "command." << name << "=" << cmd << "\n";
+        }
+    }
 }
 
 std::filesystem::path getExecutableDir(const char* argv0) {
@@ -957,6 +1018,58 @@ std::string buildWebAppMenuButton(const std::string& url) {
     return button.str();
 }
 
+std::string escapeJsonString(const std::string& input) {
+    std::string output;
+    output.reserve(input.size());
+    for (char c : input) {
+        switch (c) {
+            case '\\':
+                output += "\\\\";
+                break;
+            case '"':
+                output += "\\\"";
+                break;
+            case '\n':
+                output += "\\n";
+                break;
+            case '\r':
+                output += "\\r";
+                break;
+            case '\t':
+                output += "\\t";
+                break;
+            default:
+                output += c;
+                break;
+        }
+    }
+    return output;
+}
+
+std::string buildKeyboardJson(const std::vector<std::vector<std::string>>& rows, bool resize_keyboard = true) {
+    std::ostringstream json;
+    json << "{\"keyboard\":[";
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (i > 0) {
+            json << ",";
+        }
+        json << "[";
+        for (std::size_t j = 0; j < rows[i].size(); ++j) {
+            if (j > 0) {
+                json << ",";
+            }
+            json << "\"" << escapeJsonString(rows[i][j]) << "\"";
+        }
+        json << "]";
+    }
+    json << "]";
+    if (resize_keyboard) {
+        json << ",\"resize_keyboard\":true";
+    }
+    json << "}";
+    return json.str();
+}
+
 std::string getStatus() {
     std::ostringstream status;
     auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
@@ -1000,6 +1113,23 @@ void sendMessage(const std::string& token, long long chat_id, const std::string&
 
     std::string escaped = escapeForUrl(curl, text);
     std::string data = "chat_id=" + std::to_string(chat_id) + "&text=" + escaped;
+    std::string url = "https://api.telegram.org/bot" + token + "/sendMessage";
+    curl_easy_cleanup(curl);
+    httpPost(url, data);
+}
+
+void sendMessageWithReplyMarkup(const std::string& token,
+                                long long chat_id,
+                                const std::string& text,
+                                const std::string& reply_markup) {
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        throw std::runtime_error("Failed to init curl");
+    }
+
+    std::string escaped_text = escapeForUrl(curl, text);
+    std::string escaped_markup = escapeForUrl(curl, reply_markup);
+    std::string data = "chat_id=" + std::to_string(chat_id) + "&text=" + escaped_text + "&reply_markup=" + escaped_markup;
     std::string url = "https://api.telegram.org/bot" + token + "/sendMessage";
     curl_easy_cleanup(curl);
     httpPost(url, data);
@@ -1057,6 +1187,79 @@ void sendPhoto(const std::string& token, long long chat_id, const std::string& p
     curl_easy_cleanup(curl);
 }
 
+void sendDocument(const std::string& token, long long chat_id, const std::string& path, const std::string& caption) {
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        throw std::runtime_error("Failed to init curl");
+    }
+
+    std::string url = "https://api.telegram.org/bot" + token + "/sendDocument";
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "PCController/1.0");
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+    curl_mime* mime = curl_mime_init(curl);
+    curl_mimepart* part = curl_mime_addpart(mime);
+    curl_mime_name(part, "chat_id");
+    curl_mime_data(part, std::to_string(chat_id).c_str(), CURL_ZERO_TERMINATED);
+
+    part = curl_mime_addpart(mime);
+    curl_mime_name(part, "caption");
+    curl_mime_data(part, caption.c_str(), CURL_ZERO_TERMINATED);
+
+    part = curl_mime_addpart(mime);
+    curl_mime_name(part, "document");
+    curl_mime_filedata(part, path.c_str());
+
+    curl_easy_setopt(curl, CURLOPT_MIMEPOST, mime);
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        std::string error = curl_easy_strerror(res);
+        curl_mime_free(mime);
+        curl_easy_cleanup(curl);
+        throw std::runtime_error("curl error: " + error);
+    }
+
+    curl_mime_free(mime);
+    curl_easy_cleanup(curl);
+}
+
+std::string buildCompressionLabel(bool enabled) {
+    return std::string("Сжатие: ") + (enabled ? "вкл" : "выкл");
+}
+
+void showMainMenu(const std::string& token, long long chat_id) {
+    auto keyboard = buildKeyboardJson({{"Скриншот", "Настройки"}});
+    sendMessageWithReplyMarkup(token, chat_id, "Главное меню.", keyboard);
+}
+
+void showSettingsMenu(const std::string& token, long long chat_id) {
+    auto keyboard = buildKeyboardJson({{"Качество"}, {"Назад"}});
+    sendMessageWithReplyMarkup(token, chat_id, "Настройки.", keyboard);
+}
+
+void showQualityMenu(const std::string& token, long long chat_id) {
+    auto keyboard = buildKeyboardJson({{"Скриншот"}, {"Назад"}});
+    sendMessageWithReplyMarkup(token, chat_id, "Настройки: Качество.", keyboard);
+}
+
+void showScreenshotMenu(const std::string& token, long long chat_id, bool compression_enabled) {
+    auto keyboard = buildKeyboardJson({{"Разрешение", "Качество"}, {buildCompressionLabel(compression_enabled)}, {"Назад"}});
+    sendMessageWithReplyMarkup(token, chat_id, "Качество: Скриншот.", keyboard);
+}
+
+void showResolutionMenu(const std::string& token, long long chat_id) {
+    auto keyboard = buildKeyboardJson({{"720", "1080", "1440"}, {"Назад"}});
+    sendMessageWithReplyMarkup(token, chat_id, "Разрешение скриншота.", keyboard);
+}
+
+void showQualityInputPrompt(const std::string& token, long long chat_id) {
+    auto keyboard = buildKeyboardJson({{"Назад"}});
+    sendMessageWithReplyMarkup(token, chat_id, "Введите качество от 10 до 100.", keyboard);
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1108,6 +1311,7 @@ int main(int argc, char* argv[]) {
     long long offset = 0;
     Config runtime_config = config;
     std::unordered_set<long long> menu_button_set;
+    std::map<long long, ChatState> chat_states;
     while (true) {
         try {
             std::string url = "https://api.telegram.org/bot" + token + "/getUpdates?timeout=5&offset=" + std::to_string(offset);
@@ -1139,6 +1343,7 @@ int main(int argc, char* argv[]) {
                     continue;
                 }
 
+                ChatState& state = chat_states[update.chat_id];
                 std::string text = trim(update.text);
                 if (!runtime_config.webapp_url.empty() &&
                     menu_button_set.find(update.chat_id) == menu_button_set.end()) {
@@ -1182,7 +1387,11 @@ int main(int argc, char* argv[]) {
                     if (!captureScreenshot(runtime_config, screenshot_path, error)) {
                         sendMessage(token, update.chat_id, error);
                     } else {
-                        sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
+                        if (runtime_config.screenshot_compression) {
+                            sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
+                        } else {
+                            sendDocument(token, update.chat_id, screenshot_path, "Скриншот готов.");
+                        }
                         sendMessage(token, update.chat_id, "Готово.");
                     }
                 } else {
@@ -1196,22 +1405,123 @@ int main(int argc, char* argv[]) {
                         runtime_config.screenshot_width = width;
                         runtime_config.screenshot_height = height;
                         runtime_config.screenshot_quality = std::clamp(quality, 10, 100);
+                        saveConfig(config_path, runtime_config);
                         sendMessage(token, update.chat_id, "Настройки применены.");
                     } else if (!web_app_data.empty() && text.empty()) {
                         sendMessage(token, update.chat_id, "Неизвестные данные Web App.");
-                    } else if (text == "Скриншот" || text == "/screenshot") {
+                    } else if (text == "/start") {
+                        state.menu = MenuState::Main;
+                        showMainMenu(token, update.chat_id);
+                    } else if (text == "/screenshot") {
                         std::string screenshot_path;
                         std::string error;
                         if (!captureScreenshot(runtime_config, screenshot_path, error)) {
                             sendMessage(token, update.chat_id, error);
                         } else {
-                            sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
+                            if (runtime_config.screenshot_compression) {
+                                sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
+                            } else {
+                                sendDocument(token, update.chat_id, screenshot_path, "Скриншот готов.");
+                            }
                             sendMessage(token, update.chat_id, "Готово.");
                         }
-                    } else if (text == "/start") {
-                        sendMessage(token, update.chat_id, "PCController is online.");
+                    } else if (text == "Назад") {
+                        switch (state.menu) {
+                            case MenuState::Settings:
+                                state.menu = MenuState::Main;
+                                showMainMenu(token, update.chat_id);
+                                break;
+                            case MenuState::QualityMenu:
+                                state.menu = MenuState::Settings;
+                                showSettingsMenu(token, update.chat_id);
+                                break;
+                            case MenuState::ScreenshotMenu:
+                                state.menu = MenuState::QualityMenu;
+                                showQualityMenu(token, update.chat_id);
+                                break;
+                            case MenuState::ResolutionMenu:
+                                state.menu = MenuState::ScreenshotMenu;
+                                showScreenshotMenu(token, update.chat_id, runtime_config.screenshot_compression);
+                                break;
+                            case MenuState::AwaitingQualityInput:
+                                state.menu = MenuState::ScreenshotMenu;
+                                showScreenshotMenu(token, update.chat_id, runtime_config.screenshot_compression);
+                                break;
+                            case MenuState::Main:
+                            default:
+                                state.menu = MenuState::Main;
+                                showMainMenu(token, update.chat_id);
+                                break;
+                        }
+                    } else if (state.menu == MenuState::AwaitingQualityInput) {
+                        int quality_value = 0;
+                        try {
+                            quality_value = std::stoi(text);
+                        } catch (const std::exception&) {
+                            sendMessage(token, update.chat_id, "Введите число от 10 до 100.");
+                            showQualityInputPrompt(token, update.chat_id);
+                            continue;
+                        }
+
+                        if (quality_value < 10 || quality_value > 100) {
+                            sendMessage(token, update.chat_id, "Качество должно быть от 10 до 100.");
+                            showQualityInputPrompt(token, update.chat_id);
+                            continue;
+                        }
+
+                        runtime_config.screenshot_quality = quality_value;
+                        saveConfig(config_path, runtime_config);
+                        sendMessage(token, update.chat_id, "Настройки применены.");
+                        state.menu = MenuState::Settings;
+                        showSettingsMenu(token, update.chat_id);
+                    } else if (text == "Скриншот" && state.menu == MenuState::QualityMenu) {
+                        state.menu = MenuState::ScreenshotMenu;
+                        showScreenshotMenu(token, update.chat_id, runtime_config.screenshot_compression);
+                    } else if (text == "Разрешение" && state.menu == MenuState::ScreenshotMenu) {
+                        state.menu = MenuState::ResolutionMenu;
+                        showResolutionMenu(token, update.chat_id);
+                    } else if (text == "Качество" && state.menu == MenuState::ScreenshotMenu) {
+                        state.menu = MenuState::AwaitingQualityInput;
+                        showQualityInputPrompt(token, update.chat_id);
+                    } else if (text == "Качество" && state.menu == MenuState::Settings) {
+                        state.menu = MenuState::QualityMenu;
+                        showQualityMenu(token, update.chat_id);
+                    } else if (text == "Настройки" && state.menu == MenuState::Main) {
+                        state.menu = MenuState::Settings;
+                        showSettingsMenu(token, update.chat_id);
+                    } else if ((text == "720" || text == "1080" || text == "1440") &&
+                               state.menu == MenuState::ResolutionMenu) {
+                        int height_value = std::stoi(text);
+                        int width_value = height_value * 16 / 9;
+                        runtime_config.screenshot_width = width_value;
+                        runtime_config.screenshot_height = height_value;
+                        saveConfig(config_path, runtime_config);
+                        sendMessage(token, update.chat_id, "Настройки применены.");
+                        state.menu = MenuState::Settings;
+                        showSettingsMenu(token, update.chat_id);
+                    } else if (text.rfind("Сжатие", 0) == 0 && state.menu == MenuState::ScreenshotMenu) {
+                        runtime_config.screenshot_compression = !runtime_config.screenshot_compression;
+                        runtime_config.screenshot_format = runtime_config.screenshot_compression ? "jpg" : "png";
+                        saveConfig(config_path, runtime_config);
+                        sendMessage(token, update.chat_id, buildCompressionLabel(runtime_config.screenshot_compression));
+                        state.menu = MenuState::Settings;
+                        showSettingsMenu(token, update.chat_id);
+                    } else if (text == "Скриншот" && state.menu == MenuState::Main) {
+                        std::string screenshot_path;
+                        std::string error;
+                        if (!captureScreenshot(runtime_config, screenshot_path, error)) {
+                            sendMessage(token, update.chat_id, error);
+                        } else {
+                            if (runtime_config.screenshot_compression) {
+                                sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
+                            } else {
+                                sendDocument(token, update.chat_id, screenshot_path, "Скриншот готов.");
+                            }
+                            sendMessage(token, update.chat_id, "Готово.");
+                        }
+                        showMainMenu(token, update.chat_id);
                     } else {
-                        sendMessage(token, update.chat_id, "Используйте /screenshot для снимка экрана.");
+                        showMainMenu(token, update.chat_id);
                     }
                 }
             }
