@@ -46,6 +46,7 @@ struct Config {
 };
 
 constexpr std::size_t kMaxMessageLength = 3500;
+constexpr const char* kDefaultLogDirectory = "C:\\Users\\Gleb\\pc\\logs";
 
 size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     std::size_t total_size = size * nmemb;
@@ -140,6 +141,26 @@ void logDebug(const Config& config, const std::string& message) {
     log_file << "[" << currentTimestamp() << "] " << message << "\n";
 }
 
+std::string resolveLogPath(const std::string& configured_path) {
+    std::filesystem::path log_dir(kDefaultLogDirectory);
+    std::error_code ec;
+    std::filesystem::create_directories(log_dir, ec);
+
+    std::filesystem::path filename;
+    if (!configured_path.empty()) {
+        std::filesystem::path provided(configured_path);
+        if (provided.has_filename() && provided.filename() != "." && provided.filename() != "..") {
+            filename = provided.filename();
+        }
+    }
+
+    if (filename.empty()) {
+        filename = "pccontroller.log";
+    }
+
+    return (log_dir / filename).string();
+}
+
 std::filesystem::path getExecutableDir(const char* argv0) {
 #ifdef _WIN32
     char path_buffer[MAX_PATH] = {0};
@@ -208,6 +229,7 @@ Config loadConfig(const std::string& path) {
         }
     }
 
+    config.debug_log_path = resolveLogPath(config.debug_log_path);
     return config;
 }
 
