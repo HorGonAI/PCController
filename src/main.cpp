@@ -1,10 +1,8 @@
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -35,7 +33,6 @@ struct Update {
 
 struct Config {
     std::unordered_set<long long> allowed_chat_ids;
-    std::map<std::string, std::string> commands;
     int screenshot_width = 1280;
     int screenshot_height = 720;
     bool screenshot_compression = true;
@@ -58,7 +55,6 @@ struct ChatState {
     MenuState menu = MenuState::Main;
 };
 
-constexpr std::size_t kMaxMessageLength = 3500;
 constexpr const char* kDefaultLogDirectory = "C:\\Users\\Gleb\\pc\\logs";
 
 std::ofstream g_log_stream;
@@ -236,12 +232,6 @@ void saveConfig(const std::string& path, const Config& config) {
         file << "debug.log_path=" << config.debug_log_path << "\n\n";
     }
 
-    if (!config.commands.empty()) {
-        file << "# Allowed commands\n";
-        for (const auto& [name, cmd] : config.commands) {
-            file << "command." << name << "=" << cmd << "\n";
-        }
-    }
 }
 
 std::filesystem::path getExecutableDir(const char* argv0) {
@@ -289,11 +279,6 @@ Config loadConfig(const std::string& path) {
                 if (!id.empty()) {
                     config.allowed_chat_ids.insert(std::stoll(id));
                 }
-            }
-        } else if (key.rfind("command.", 0) == 0) {
-            std::string name = key.substr(std::strlen("command."));
-            if (!name.empty() && !value.empty()) {
-                config.commands[name] = value;
             }
         } else if (key == "screenshot.width") {
             config.screenshot_width = std::stoi(value);
@@ -689,36 +674,6 @@ std::string escapeForUrl(CURL* curl, const std::string& value) {
     return result;
 }
 
-std::string runCommand(const std::string& command) {
-#ifdef _WIN32
-    FILE* pipe = _popen(command.c_str(), "r");
-#else
-    FILE* pipe = popen(command.c_str(), "r");
-#endif
-    if (!pipe) {
-        return "Failed to execute command.";
-    }
-
-    std::array<char, 256> buffer;
-    std::string result;
-    while (fgets(buffer.data(), buffer.size(), pipe)) {
-        result.append(buffer.data());
-        if (result.size() > kMaxMessageLength) {
-            result.resize(kMaxMessageLength);
-            result.append("...\n");
-            break;
-        }
-    }
-
-#ifdef _WIN32
-    _pclose(pipe);
-#else
-    pclose(pipe);
-#endif
-
-    return trim(result.empty() ? "(no output)" : result);
-}
-
 std::string buildScreenshotPath(const std::string& format) {
     std::ostringstream path;
     auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
@@ -1070,41 +1025,6 @@ std::string buildKeyboardJson(const std::vector<std::vector<std::string>>& rows,
     return json.str();
 }
 
-std::string getStatus() {
-    std::ostringstream status;
-    auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    status << "Status: online\n";
-    status << "Time: " << std::ctime(&now);
-#ifdef _WIN32
-    status << "OS: Windows\n";
-#elif __APPLE__
-    status << "OS: macOS\n";
-#elif __linux__
-    status << "OS: Linux\n";
-#else
-    status << "OS: Unknown\n";
-#endif
-    return status.str();
-}
-
-std::string buildHelp(const Config& config) {
-    std::ostringstream help;
-    help << "Commands:\n";
-    help << "/start - greeting\n";
-    help << "/help - this help\n";
-    help << "/status - system info\n";
-    help << "/list - list allowed commands\n";
-    help << "/run <name> - execute allowed command\n";
-    if (!config.commands.empty()) {
-        help << "\nAllowed commands:\n";
-        for (const auto& [name, cmd] : config.commands) {
-            (void)cmd;
-            help << "- " << name << "\n";
-        }
-    }
-    return help.str();
-}
-
 void sendMessage(const std::string& token, long long chat_id, const std::string& text) {
     CURL* curl = curl_easy_init();
     if (!curl) {
@@ -1224,6 +1144,20 @@ void sendDocument(const std::string& token, long long chat_id, const std::string
 
     curl_mime_free(mime);
     curl_easy_cleanup(curl);
+}
+
+bool sendScreenshot(const std::string& token, long long chat_id, const Config& config, std::string& error) {
+    std::string screenshot_path;
+    if (!captureScreenshot(config, screenshot_path, error)) {
+        return false;
+    }
+    if (config.screenshot_compression) {
+        sendPhoto(token, chat_id, screenshot_path, "Скриншот готов.");
+    } else {
+        sendDocument(token, chat_id, screenshot_path, "Скриншот готов.");
+    }
+    sendMessage(token, chat_id, "Готово.");
+    return true;
 }
 
 std::string buildCompressionLabel(bool enabled) {
@@ -1382,17 +1316,9 @@ int main(int argc, char* argv[]) {
                             }
                         }
                     }
-                    std::string screenshot_path;
                     std::string error;
-                    if (!captureScreenshot(runtime_config, screenshot_path, error)) {
+                    if (!sendScreenshot(token, update.chat_id, runtime_config, error)) {
                         sendMessage(token, update.chat_id, error);
-                    } else {
-                        if (runtime_config.screenshot_compression) {
-                            sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
-                        } else {
-                            sendDocument(token, update.chat_id, screenshot_path, "Скриншот готов.");
-                        }
-                        sendMessage(token, update.chat_id, "Готово.");
                     }
                 } else {
                     bool compression = runtime_config.screenshot_compression;
@@ -1413,17 +1339,9 @@ int main(int argc, char* argv[]) {
                         state.menu = MenuState::Main;
                         showMainMenu(token, update.chat_id);
                     } else if (text == "/screenshot") {
-                        std::string screenshot_path;
                         std::string error;
-                        if (!captureScreenshot(runtime_config, screenshot_path, error)) {
+                        if (!sendScreenshot(token, update.chat_id, runtime_config, error)) {
                             sendMessage(token, update.chat_id, error);
-                        } else {
-                            if (runtime_config.screenshot_compression) {
-                                sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
-                            } else {
-                                sendDocument(token, update.chat_id, screenshot_path, "Скриншот готов.");
-                            }
-                            sendMessage(token, update.chat_id, "Готово.");
                         }
                     } else if (text == "Назад") {
                         switch (state.menu) {
@@ -1507,17 +1425,9 @@ int main(int argc, char* argv[]) {
                         state.menu = MenuState::Settings;
                         showSettingsMenu(token, update.chat_id);
                     } else if (text == "Скриншот" && state.menu == MenuState::Main) {
-                        std::string screenshot_path;
                         std::string error;
-                        if (!captureScreenshot(runtime_config, screenshot_path, error)) {
+                        if (!sendScreenshot(token, update.chat_id, runtime_config, error)) {
                             sendMessage(token, update.chat_id, error);
-                        } else {
-                            if (runtime_config.screenshot_compression) {
-                                sendPhoto(token, update.chat_id, screenshot_path, "Скриншот готов.");
-                            } else {
-                                sendDocument(token, update.chat_id, screenshot_path, "Скриншот готов.");
-                            }
-                            sendMessage(token, update.chat_id, "Готово.");
                         }
                         showMainMenu(token, update.chat_id);
                     } else {
