@@ -1101,14 +1101,15 @@ int main(int argc, char* argv[]) {
                     menu_button_set.insert(update.chat_id);
                 }
 
+                std::string web_app_data = trim(update.web_app_data);
                 std::string action;
-                bool has_action = parseWebAppAction(update.web_app_data, action);
-                if (update.web_app_data == "screenshot" || (has_action && action == "screenshot")) {
+                bool has_action = parseWebAppAction(web_app_data, action);
+                if (web_app_data == "screenshot" || (has_action && action == "screenshot")) {
                     bool compression = runtime_config.screenshot_compression;
                     int width = runtime_config.screenshot_width;
                     int height = runtime_config.screenshot_height;
                     int quality = runtime_config.screenshot_quality;
-                    if (parseWebAppScreenshotSettings(update.web_app_data, compression, width, height, quality)) {
+                    if (parseWebAppScreenshotSettings(web_app_data, compression, width, height, quality)) {
                         runtime_config.screenshot_compression = compression;
                         runtime_config.screenshot_format = compression ? "jpg" : "png";
                         runtime_config.screenshot_width = width;
@@ -1116,7 +1117,7 @@ int main(int argc, char* argv[]) {
                         runtime_config.screenshot_quality = std::clamp(quality, 10, 100);
                     } else {
                         std::map<std::string, std::string> params;
-                        if (parseQueryStringWithDecode(update.web_app_data, params)) {
+                        if (parseQueryStringWithDecode(web_app_data, params)) {
                             auto comp_it = params.find("compression");
                             auto width_it = params.find("width");
                             auto height_it = params.find("height");
@@ -1144,14 +1145,14 @@ int main(int argc, char* argv[]) {
                     int width = runtime_config.screenshot_width;
                     int height = runtime_config.screenshot_height;
                     int quality = runtime_config.screenshot_quality;
-                    if (parseWebAppSettings(update.web_app_data, compression, width, height, quality)) {
+                    if (parseWebAppSettings(web_app_data, compression, width, height, quality)) {
                         runtime_config.screenshot_compression = compression;
                         runtime_config.screenshot_format = compression ? "jpg" : "png";
                         runtime_config.screenshot_width = width;
                         runtime_config.screenshot_height = height;
                         runtime_config.screenshot_quality = std::clamp(quality, 10, 100);
                         sendMessage(token, update.chat_id, "Настройки применены.");
-                    } else if (!update.web_app_data.empty() && text.empty()) {
+                    } else if (!web_app_data.empty() && text.empty()) {
                         sendMessage(token, update.chat_id, "Неизвестные данные Web App.");
                     } else if (text == "Скриншот" || text == "/screenshot") {
                         std::string screenshot_path;
