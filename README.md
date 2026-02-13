@@ -1,1 +1,80 @@
 # PCController
+
+Telegram-бот для удалённого управления компьютером. Реализация на C++ использует Telegram Bot API через `libcurl` и управляется кнопками клавиатуры Telegram.
+
+## Возможности
+
+- Long polling через `getUpdates`.
+- Белый список chat-id.
+- Команда `/screenshot` для отправки изображения.
+- Открытие веб-интерфейса через кнопку **Open** в меню вложений Telegram.
+
+## Требования
+
+- CMake 3.16+
+- Компилятор C++17
+- `libcurl`
+- ImageMagick (`import`) для Linux (снятие скриншотов)
+- Windows использует встроенный WIC (доп. пакеты не требуются)
+
+## Сборка
+
+```bash
+cmake -S . -B build
+cmake --build build
+```
+
+## Настройка
+
+1. Создайте бота через @BotFather и получите токен.
+2. Экспортируйте токен как переменную окружения:
+
+```bash
+export TELEGRAM_BOT_TOKEN="<TOKEN>"
+```
+
+3. Отредактируйте `config/config.ini`:
+
+```ini
+allowed_chat_ids=
+screenshot.width=1280
+screenshot.height=720
+screenshot.compression=true
+screenshot.quality=85
+screenshot.format=jpg
+webapp.url=https://horgonai.github.io/PCController/
+debug.log_path=
+```
+
+`allowed_chat_ids` — список разрешённых чатов (через запятую). Пустое значение отключает whitelist. Настройки `screenshot.*` управляют разрешением и форматом снимка.
+`webapp.url` добавляет кнопку **Open** в меню вложений Telegram и должен указывать на ваш веб-интерфейс.
+`debug.log_path` включает логирование входящих обновлений и Web App данных (указывать путь к файлу, оставьте пустым для отключения).
+
+## Запуск
+
+```bash
+./build/pccontroller
+```
+
+Можно указать путь к конфигу аргументом:
+
+```bash
+./build/pccontroller путь/к/config.ini
+```
+
+## Использование
+
+1. Откройте чат с ботом.
+2. Используйте `/screenshot` для получения изображения.
+3. Кнопка **Open** откроет веб-интерфейс, если указан `webapp.url`.
+
+## Веб-интерфейс
+
+Файлы `index.html`, `app.js` и `styles.css` лежат в корне репозитория и используются GitHub Pages вместо `README.md`.
+Страница содержит кнопку отправки команды скриншота через Telegram Web App и форму настроек (сжатие, разрешение, качество).
+
+## Безопасность
+
+- Не добавляйте опасные команды в `config.ini`.
+- Ограничивайте доступ только своим chat-id.
+- Не храните токен в коде; используйте переменные окружения.
